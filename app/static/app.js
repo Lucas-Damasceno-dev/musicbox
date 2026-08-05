@@ -913,6 +913,39 @@ function applyFfmpegState() {
   if (dlNav) dlNav.disabled = !state.hasFfmpeg;
 }
 
+function bindConnectModal() {
+  const modal = document.getElementById('connect-modal');
+  const btn = document.getElementById('connect-btn');
+  const closeBtn = document.getElementById('close-modal-btn');
+  const copyBtn = document.getElementById('copy-url-btn');
+
+  if (btn && modal) {
+    btn.addEventListener('click', () => {
+      if (typeof modal.showModal === 'function') modal.showModal();
+      else modal.setAttribute('open', 'true');
+    });
+  }
+
+  if (closeBtn && modal) {
+    closeBtn.addEventListener('click', () => {
+      if (typeof modal.close === 'function') modal.close();
+      else modal.removeAttribute('open');
+    });
+  }
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', () => {
+      const urlCode = document.getElementById('modal-server-url');
+      if (!urlCode) return;
+      navigator.clipboard.writeText(urlCode.textContent).then(() => {
+        showToast('URL copiada para a área de transferência!', 'success');
+      }).catch(() => {
+        showToast('Não foi possível copiar.', 'error');
+      });
+    });
+  }
+}
+
 function loadFormat() {
   let saved = null;
   try {
@@ -957,6 +990,7 @@ function init() {
 
   bindHeader();
   bindNav();
+  bindConnectModal();
 
   // Config assíncrona (has_ffmpeg) — banner/disable aplicados quando chegar.
   loadConfig();

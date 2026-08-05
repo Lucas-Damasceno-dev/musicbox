@@ -22,12 +22,36 @@
         <span class="brand-mark" aria-hidden="true">♪</span>
         <span class="brand-name">MusicBox</span>
       </div>
-      <div class="format-toggle" role="group" aria-label="Formato de download">
-        <button type="button" class="fmt-btn" data-format="mp3" aria-pressed="true">MP3 320</button>
-        <button type="button" class="fmt-btn" data-format="opus" aria-pressed="false">Opus 160</button>
+      <div class="header-actions">
+        <button type="button" id="connect-btn" class="connect-btn" aria-label="Conectar celular">
+          <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="18" r="1" fill="currentColor"/></svg>
+          <span>Celular</span>
+        </button>
+        <div class="format-toggle" role="group" aria-label="Formato de download">
+          <button type="button" class="fmt-btn" data-format="mp3" aria-pressed="true">MP3 320</button>
+          <button type="button" class="fmt-btn" data-format="opus" aria-pressed="false">Opus 160</button>
+        </div>
       </div>
     </div>
   </header>
+
+  <!-- Modal de conexão via QR Code / URL local -->
+  <dialog id="connect-modal" class="modal-dialog">
+    <div class="modal-content">
+      <header class="modal-head">
+        <h2>Conectar ao Celular</h2>
+        <button type="button" id="close-modal-btn" class="icon-btn" aria-label="Fechar">&times;</button>
+      </header>
+      <div class="modal-body">
+        <p>Acesse pelo navegador do seu celular na mesma rede Wi-Fi:</p>
+        <div class="server-url-box">
+          <code id="modal-server-url">http://127.0.0.1:8080</code>
+          <button type="button" id="copy-url-btn" class="btn btn-small btn-ghost">Copiar</button>
+        </div>
+        <p class="modal-hint">💡 <strong>Dica de Firewall:</strong> Se o celular não carregar, libere a porta no terminal do Linux: <code>sudo ufw allow 8080/tcp</code></p>
+      </div>
+    </div>
+  </dialog>
 
   <!-- Conteúdo: as "telas" são seções renderizadas pelo app.js -->
   <main id="app" class="app-main"></main>

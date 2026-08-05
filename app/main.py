@@ -124,8 +124,14 @@ def create_app(
 
     @fastapi_app.get("/api/config")
     def get_config() -> dict:
-        """Config leve para a UI: `has_ffmpeg` (banner de aviso no frontend)."""
-        return {"has_ffmpeg": settings.has_ffmpeg}
+        """Config leve para a UI: `has_ffmpeg`, `local_ip` e `server_url`."""
+        local_ip = _local_ip()
+        return {
+            "has_ffmpeg": settings.has_ffmpeg,
+            "local_ip": local_ip,
+            "server_url": f"http://{local_ip}:{settings.port}",
+            "default_format": settings.default_format,
+        }
 
     @fastapi_app.get("/api/search")
     def search(q: str) -> dict:

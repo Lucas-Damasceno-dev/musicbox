@@ -114,6 +114,96 @@ body::after {
   color: transparent;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.connect-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(167, 139, 250, 0.12);
+  color: var(--accent);
+  border: 1px solid rgba(167, 139, 250, 0.25);
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.connect-btn:hover {
+  background: rgba(167, 139, 250, 0.22);
+  border-color: var(--accent);
+  box-shadow: 0 0 12px rgba(167, 139, 250, 0.3);
+}
+
+/* Modal de conexão */
+.modal-dialog {
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  padding: 0;
+  max-width: 440px;
+  width: 90%;
+}
+
+.modal-dialog::backdrop {
+  background: rgba(11, 9, 16, 0.75);
+  backdrop-filter: blur(8px);
+}
+
+.modal-content {
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  padding: 20px;
+  color: var(--text);
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+}
+
+.modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.modal-head h2 {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  margin: 0;
+}
+
+.server-url-box {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  margin: 12px 0;
+}
+
+.server-url-box code {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  color: var(--accent);
+  word-break: break-all;
+}
+
+.modal-hint {
+  font-size: 12px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin: 0;
+}
+
 /* Toggle de formato (MP3 320 / Opus 160) */
 .format-toggle {
   display: flex;
