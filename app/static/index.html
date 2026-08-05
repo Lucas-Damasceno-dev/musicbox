@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0910" />
+  <meta name="description" content="MusicBox — baixe músicas do YouTube Music para ouvir offline no celular." />
+  <title>MusicBox — baixe músicas para ouvir offline</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%23f472b6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='24' height='24' rx='6' fill='%230b0910'/%3E%3Cpath d='M9 17V7l7-1.5V15' fill='none' stroke='url(%23g)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='17' r='2' fill='%23f472b6'/%3E%3Ccircle cx='14' cy='15' r='2' fill='%23a78bfa'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="bg-mesh" aria-hidden="true"></div>
+
+  <!-- Cabeçalho fixo: marca + toggle de formato (persistido em localStorage) -->
+  <header class="app-header">
+    <div class="header-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">♪</span>
+        <span class="brand-name">MusicBox</span>
+      </div>
+      <div class="format-toggle" role="group" aria-label="Formato de download">
+        <button type="button" class="fmt-btn" data-format="mp3" aria-pressed="true">MP3 320</button>
+        <button type="button" class="fmt-btn" data-format="opus" aria-pressed="false">Opus 160</button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Conteúdo: as "telas" são seções renderizadas pelo app.js -->
+  <main id="app" class="app-main"></main>
+
+  <!-- Aviso persistente quando o servidor não tem ffmpeg (downloads indisponíveis) -->
+  <div id="ffmpeg-banner" class="ffmpeg-banner" role="alert" hidden>
+    Servidor sem ffmpeg: downloads não funcionarão
+  </div>
+
+  <!-- Navegação inferior fixa: Buscar | Downloads (aba fixa) -->
+  <nav class="bottom-nav" aria-label="Navegação principal">
+    <button type="button" class="nav-btn is-active" data-tab="buscar" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <span>Buscar</span>
+    </button>
+    <button type="button" class="nav-btn" data-tab="downloads">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
+      <span>Downloads</span>
+    </button>
+  </nav>
+
+  <!-- Região de toasts (aria-live para leitores de tela) -->
+  <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="false"></div>
+
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

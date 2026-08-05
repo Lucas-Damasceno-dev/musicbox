@@ -1,0 +1,21 @@
+# Ambiente virtual
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Arquivos temporários / parciais de download
+*.part
+*.tmp
+
+# Configuração local (não versionar segredos)
+.env
+
+# Banco de dados e cookies locais
+*.db
+cookies.txt
+
+# Artefatos internos do SDD
+.sdd/

@@ -1,0 +1,225 @@
+"""Testes do app/ytdlp_client.py com yt-dlp MOCKADO (sem rede).
+
+Substitui `yt_dlp.YoutubeDL` por um fake que captura as opts (verifica
+`extract_flat=True` exigido pelo spec) e devolve info/exceções por URL.
+"""
+
+import urllib.error
+import urllib.parse
+from pathlib import Path
+
+import pytest
+from yt_dlp.utils import DownloadError
+
+import app.ytdlp_client as ytdlp_module
+from app.ytdlp_client import (
+    _SEARCH_SECTIONS,
+    NetworkError,
+    NotFoundError,
+    SearchError,
+    YouTubeMusicClient,
+)
+
+
+@pytest.fixture
+def fake_ydl(monkeypatch):
+    """Fake do YoutubeDL: captura opts/urls e devolve info ou exceção por URL."""
+    state = {
+        "opts": [],
+        "urls": [],
+        "infos": {},  # url exata → info
+        "default_info": {},
+        "default_exception": None,
+    }
+
+    class FakeYDL:
+        def __init__(self, opts=None):
+            state["opts"].append(opts)
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            state["urls"].append(url)
+            if url in state["infos"]:
+                return state["infos"][url]
+            if state["default_exception"] is not None:
+                raise state["default_exception"]
+            return state["default_info"]
+
+    monkeypatch.setattr(ytdlp_module.yt_dlp, "YoutubeDL", FakeYDL)
+    return state
+
+
+def _section_url(query: str, section: str) -> str:
+    """Monta a URL de seção igual ao `_search_section` do client (para o fake)."""
+    return (
+        "https://music.youtube.com/search?q="
+        + urllib.parse.quote(query)
+        + "&sp="
+        + urllib.parse.quote(_SEARCH_SECTIONS[section])
+    )
+
+
+def test_search_passa_extract_flat_e_classifica(fake_ydl):
+    fake_ydl["infos"][_section_url("queen", "albums")] = {
+        "title": "Resultado",
+        "entries": [{"id": "MPRE1", "url": "https://music.youtube.com/browse/MPRE1"}],
+    }
+    fake_ydl["infos"][_section_url("queen", "artists")] = {
+        "title": "Resultado",
+        "entries": [{"id": "UC1", "url": "https://music.youtube.com/channel/UC1"}],
+    }
+    fake_ydl["default_info"] = {"title": "Titulo Resolvido"}  # usado no _resolve_title
+
+    results = YouTubeMusicClient().search("queen")
+
+    assert len(results.albums) == 1 and results.albums[0].id == "MPRE1"
+    assert len(results.artists) == 1 and results.artists[0].id == "UC1"
+    assert results.albums[0].kind == "album"
+    assert results.artists[0].kind == "artist"
+    assert results.albums[0].title == "Titulo Resolvido"
+    # TODAS as extrações (seções + resolução de títulos) usam extract_flat=True.
+    assert fake_ydl["opts"]
+    assert all(opts.get("extract_flat") is True for opts in fake_ydl["opts"])
+
+
+def test_search_sem_resultados_not_found(fake_ydl):
+    fake_ydl["default_info"] = {"entries": []}
+    with pytest.raises(NotFoundError):
+        YouTubeMusicClient().search("zzzz")
+
+
+def test_search_network_error_apos_retries(fake_ydl):
+    fake_ydl["default_exception"] = urllib.error.URLError("network unreachable")
+    client = YouTubeMusicClient(timeout=10, retries=2)
+    with pytest.raises(NetworkError):
+        client.search("queen")
+    # retries + 1 = 3 tentativas (só a 1ª seção roda antes de propagar).
+    assert len(fake_ydl["urls"]) == 3
+
+
+def test_download_error_nao_rede_nao_retenta(fake_ydl):
+    fake_ydl["default_exception"] = DownloadError("ERROR: video unavailable")
+    client = YouTubeMusicClient(retries=2)
+    with pytest.raises(SearchError):
+        client.search("queen")
+    assert len(fake_ydl["urls"]) == 1  # falha não-rede: sem retry
+
+
+def test_album_tracks_limpa_titulo_e_numera(fake_ydl):
+    fake_ydl["infos"]["https://music.youtube.com/browse/MPRE1"] = {
+        "title": "Album - Greatest Hits (3 Songs)",
+        "channel": "Queen",
+        "entries": [
+            {"id": "t1", "title": "Bohemian Rhapsody", "duration": 356},
+            {"id": "t2", "title": "Another One Bites", "duration": 216},
+            {"id": "t3", "title": "Killer Queen", "duration": 180},
+        ],
+    }
+    album = YouTubeMusicClient().album_tracks("MPRE1")
+    assert album.title == "Greatest Hits"  # mangled "Album - X (3 Songs)" → "X"
+    assert album.artist == "Queen"
+    assert album.year is None
+    assert [t.number for t in album.tracks] == [1, 2, 3]  # posição na playlist
+    assert album.tracks[0].yt_id == "t1"
+    assert album.tracks[0].duration == 356
+    assert all(opts.get("extract_flat") is True for opts in fake_ydl["opts"])
+
+
+def test_album_tracks_follow_redirect(fake_ydl):
+    browse_url = "https://music.youtube.com/browse/MPREredir"
+    playlist_url = "https://music.youtube.com/playlist?list=OLAK5uy_abc"
+    fake_ydl["infos"][browse_url] = {"url": playlist_url, "title": ""}  # stub redirect
+    fake_ydl["infos"][playlist_url] = {
+        "title": "Album X",
+        "entries": [{"id": "t1", "title": "Faixa 1"}],
+    }
+    album = YouTubeMusicClient().album_tracks("MPREredir")
+    assert album.title == "Album X"
+    assert len(album.tracks) == 1
+    assert fake_ydl["urls"] == [browse_url, playlist_url]
+
+
+def test_album_tracks_sem_faixas_not_found(fake_ydl):
+    fake_ydl["default_info"] = {"title": "Vazio", "entries": []}
+    with pytest.raises(NotFoundError):
+        YouTubeMusicClient().album_tracks("MPREvazio")
+
+
+def test_track_metadata_artists_lista_de_dicts(fake_ydl):
+    fake_ydl["default_info"] = {"title": "T", "artists": [{"name": "A1"}, "A2"]}
+    md = YouTubeMusicClient().track_metadata("yt9")
+    assert md["artists"] == ["A1", "A2"]
+
+
+def test_track_metadata_artists_scalar(fake_ydl):
+    fake_ydl["default_info"] = {"artists": "Solo Artist"}
+    assert YouTubeMusicClient().track_metadata("yt9")["artists"] == ["Solo Artist"]
+
+
+def test_track_metadata_chaves_ausentes_none(fake_ydl):
+    fake_ydl["default_info"] = {}
+    md = YouTubeMusicClient().track_metadata("yt9")
+    assert md["title"] is None
+    assert md["artists"] == []
+    assert md["album"] is None
+    assert md["track"] is None
+    assert md["release_year"] is None
+    assert md["duration"] is None
+    assert md["webpage_url"] == "https://music.youtube.com/watch?v=yt9"
+
+
+def test_opts_sem_cookies_por_padrao():
+    opts = YouTubeMusicClient()._opts
+    assert "cookiefile" not in opts
+    assert "cookiesfrombrowser" not in opts
+
+
+def test_opts_cookies_file():
+    client = YouTubeMusicClient(cookies_file=Path("/tmp/cookies.txt"))
+    assert client._opts["cookiefile"] == "/tmp/cookies.txt"
+    assert "cookiesfrombrowser" not in client._opts
+
+
+def test_opts_cookies_from_browser_tupla():
+    client = YouTubeMusicClient(cookies_from_browser="firefox")
+    assert client._opts["cookiesfrombrowser"] == ("firefox",)
+    assert "cookiefile" not in client._opts
+
+
+def test_opts_ambos_cookiefile_vence():
+    client = YouTubeMusicClient(
+        cookies_file=Path("/tmp/c.txt"),
+        cookies_from_browser="chrome",
+    )
+    assert client._opts["cookiefile"] == "/tmp/c.txt"
+    assert "cookiesfrombrowser" not in client._opts
+
+
+def test_extract_remove_ansi_do_search_error(fake_ydl):
+    fake_ydl["default_exception"] = DownloadError(
+        "\x1b[0;31mERROR:\x1b[0m [youtube] abc: "
+        "Sign in to confirm you're not a bot. Use --cookies-from-browser or "
+        "--cookies for the authentication."
+    )
+    with pytest.raises(SearchError) as excinfo:
+        YouTubeMusicClient().search("queen")
+    message = str(excinfo.value)
+    assert "\x1b[" not in message
+    assert "Sign in to confirm" in message
+
+
+def test_extract_remove_ansi_do_network_error(fake_ydl):
+    fake_ydl["default_exception"] = urllib.error.URLError(
+        "\x1b[0;31mERROR:\x1b[0m [youtube] abc: connection timed out"
+    )
+    with pytest.raises(NetworkError) as excinfo:
+        YouTubeMusicClient(timeout=10, retries=1).search("queen")
+    message = str(excinfo.value)
+    assert "\x1b[" not in message
+    assert "connection timed out" in message
