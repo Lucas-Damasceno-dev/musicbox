@@ -1,15 +1,27 @@
-# MusicBox
+# MusicBox — Player de Música & Downloader Pessoal
 
-Baixa músicas e álbuns do YouTube Music para ouvir offline no celular, na mesma rede Wi-Fi.
+MusicBox é um **Player de Música e Downloader Pessoal (Self-Hosted)** que busca, reproduz e baixa músicas e álbuns do YouTube Music para ouvir offline no celular e no computador.
+
+## Recurso e Funcionalidades
+
+- **Full Music Player**: Mini-Player de áudio flutuante com reprodução direta no navegador (online e offline).
+- **PWA (Progressive Web App)**: Pode ser instalado na tela inicial do celular (Android/iOS) rodando como app nativo em tela cheia.
+- **Cache de Busca Instantâneo (LRU)**: Buscas repetidas respondem em ~0.01s.
+- **Capas em Alta Definição (HD Cover Art)**: Up-scaling automático de thumbnails para alta resolução (600x600 px).
+- **Busca por URL Direta**: Cole qualquer link do YouTube / YouTube Music diretamente na busca.
+- **Edição de Metadados / Tags ID3**: Edite títulos, artistas e álbuns diretamente na interface e nas tags dos arquivos de mídia.
+- **Exportação de Playlists `.M3U`**: Baixe um arquivo `.m3u` para carregar suas músicas em players externos.
+- **Recuperação de Falhas**: Botão para re-enfileirar todos os downloads que falharam em 1 clique.
+- **Transferência Automática para o Celular**: O download é disparado automaticamente para o dispositivo assim que a conversão conclui.
 
 ## Stack
 
 - **Python 3.11+** (testado com 3.12)
 - **FastAPI** — servidor HTTP, rotas REST e WebSocket
 - **yt-dlp** — extração de metadados e download
-- **mutagen** — incorporação de capa/tags de áudio (ID3/Ogg)
-- **SQLite** — histórico de downloads (via stdlib `sqlite3`, zero-config)
-- **Frontend vanilla modernizado** (HTML/JS/CSS com Google Fonts, Audio Player integrado) servido pelo próprio FastAPI em `app/static/`
+- **mutagen** — incorporação e edição de tags de áudio (ID3/Ogg)
+- **SQLite** — histórico de downloads e biblioteca (via stdlib `sqlite3`, zero-config)
+- **Frontend Vanilla & PWA** (HTML5, ServiceWorker, Google Fonts, Audio Engine) em `app/static/`
 - **Sem Docker** — o backend roda nativo
 
 ## Requisitos

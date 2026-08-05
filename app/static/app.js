@@ -576,7 +576,11 @@ function downloadsViewHtml() {
     <section class="view downloads-view" aria-label="Downloads">
       <header class="view-head">
         <h1 class="view-title">Downloads</h1>
-        <button type="button" class="btn btn-ghost btn-small" id="refresh-btn">Atualizar</button>
+        <div class="view-head-actions">
+          <button type="button" class="btn btn-ghost btn-small" id="retry-failed-btn">Retentar Falhas</button>
+          <a href="/api/export.m3u" download class="btn btn-ghost btn-small" id="export-m3u-btn">Exportar .M3U</a>
+          <button type="button" class="btn btn-ghost btn-small" id="refresh-btn">Atualizar</button>
+        </div>
       </header>
 
       <div class="queue-section">
@@ -598,6 +602,19 @@ function downloadsViewHtml() {
 function bindDownloadsEvents() {
   const refresh = document.getElementById('refresh-btn');
   if (refresh) refresh.addEventListener('click', refreshDownloads);
+
+  const retryFailed = document.getElementById('retry-failed-btn');
+  if (retryFailed) {
+    retryFailed.addEventListener('click', async () => {
+      try {
+        const res = await apiFetch('/api/downloads/retry-failed', { method: 'POST' });
+        showToast(`${res.retried_count} ${res.retried_count === 1 ? 'task re-enfileirada' : 'tasks re-enfileiradas'}`, 'success');
+        refreshDownloads();
+      } catch (err) {
+        handleApiError(err, 'Não foi possível retentar falhas.');
+      }
+    });
+  }
 }
 
 // Fallback REST + histórico (usado ao abrir a aba e se o WS cair).
@@ -669,11 +686,14 @@ function updateTaskCard(el, task) {
       <div class="audio-preview">
         <audio controls preload="none" src="${audioUrl}"></audio>
       </div>
-      <a
-        class="btn btn-primary btn-small save-link"
-        href="${audioUrl}"
-        download
-      >${ICONS.download} Salvar no celular</a>`;
+      <div class="task-action-btns">
+        <a
+          class="btn btn-primary btn-small save-link"
+          href="${audioUrl}"
+          download
+        >${ICONS.download} Salvar no celular</a>
+        <button type="button" class="btn btn-ghost btn-small edit-meta-btn" data-yt-id="${escapeHtml(task.yt_id)}" data-title="${escapeHtml(task.title || '')}" data-artist="${escapeHtml(task.artist || '')}" data-album="${escapeHtml(task.album || '')}">Editar Tags</button>
+      </div>`;
   } else if (status === 'failed') {
     actions = `
       ${task.error ? `<p class="task-error">${escapeHtml(task.error)}</p>` : ''}
@@ -705,6 +725,11 @@ function updateTaskCard(el, task) {
   const retryBtn = el.querySelector('.retry-btn');
   if (retryBtn) {
     retryBtn.addEventListener('click', () => retryTask(task));
+  }
+
+  const editBtn = el.querySelector('.edit-meta-btn');
+  if (editBtn) {
+    editBtn.addEventListener('click', () => openEditMetaModal(editBtn.dataset));
   }
 }
 
@@ -983,6 +1008,67 @@ function bindNav() {
   });
 }
 
+function openEditMetaModal(data) {
+  const modal = document.getElementById('edit-meta-modal');
+  const inputYtId = document.getElementById('edit-yt-id');
+  const inputTitle = document.getElementById('edit-title');
+  const inputArtist = document.getElementById('edit-artist');
+  const inputAlbum = document.getElementById('edit-album');
+
+  if (!modal || !inputYtId) return;
+
+  inputYtId.value = data.ytId || '';
+  inputTitle.value = data.title || '';
+  inputArtist.value = data.artist || '';
+  inputAlbum.value = data.album || '';
+
+  if (typeof modal.showModal === 'function') modal.showModal();
+  else modal.setAttribute('open', 'true');
+}
+
+function bindEditMetaModal() {
+  const modal = document.getElementById('edit-meta-modal');
+  const closeBtn = document.getElementById('close-edit-modal-btn');
+  const form = document.getElementById('edit-meta-form');
+
+  if (closeBtn && modal) {
+    closeBtn.addEventListener('click', () => {
+      if (typeof modal.close === 'function') modal.close();
+      else modal.removeAttribute('open');
+    });
+  }
+
+  if (form) {
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const ytId = document.getElementById('edit-yt-id').value;
+      const title = document.getElementById('edit-title').value;
+      const artist = document.getElementById('edit-artist').value;
+      const album = document.getElementById('edit-album').value;
+
+      try {
+        await apiFetch(`/api/history/${encodeURIComponent(ytId)}/metadata`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title, artist, album }),
+        });
+        showToast('Metadados e tags atualizadas!', 'success');
+        if (typeof modal.close === 'function') modal.close();
+        else modal.removeAttribute('open');
+        refreshDownloads();
+      } catch (err) {
+        handleApiError(err, 'Não foi possível salvar os metadados.');
+      }
+    });
+  }
+}
+
+function registerServiceWorker() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('/static/sw.js').catch(() => {});
+  }
+}
+
 function init() {
   state.format = loadFormat();
   state.mainEl = document.getElementById('app');
@@ -991,11 +1077,11 @@ function init() {
   bindHeader();
   bindNav();
   bindConnectModal();
+  bindEditMetaModal();
+  registerServiceWorker();
 
-  // Config assíncrona (has_ffmpeg) — banner/disable aplicados quando chegar.
   loadConfig();
 
-  // Sincroniza o estado do toggle com o formato persistido
   document.querySelectorAll('.fmt-btn').forEach((b) => {
     const active = b.dataset.format === state.format;
     b.classList.toggle('is-active', active);

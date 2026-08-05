@@ -201,3 +201,38 @@ class History:
             return int(row[0])
         finally:
             conn.close()
+
+    def update_tags(self, yt_id: str, title: str, artist: str, album: str) -> bool:
+        """Atualiza metadados no SQLite e nas tags de mídia (ID3/Ogg) via Mutagen se o arquivo existir."""
+        record = self.get(yt_id)
+        if not record:
+            return False
+        self.update_meta(yt_id, title, artist, album)
+        file_path = record.get("path")
+        if file_path and Path(file_path).exists():
+            try:
+                import mutagen
+                from mutagen.easyid3 import EasyID3
+                from mutagen.mp3 import MP3
+                from mutagen.oggopus import OggOpus
+
+                p = Path(file_path)
+                if p.suffix.lower() == ".mp3":
+                    try:
+                        audio = EasyID3(str(p))
+                    except mutagen.id3.ID3NoHeaderError:
+                        audio = MP3(str(p), EasyID3=EasyID3)
+                        audio.add_tags()
+                    audio["title"] = title
+                    audio["artist"] = artist
+                    audio["album"] = album
+                    audio.save()
+                elif p.suffix.lower() == ".opus":
+                    audio = OggOpus(str(p))
+                    audio["title"] = [title]
+                    audio["artist"] = [artist]
+                    audio["album"] = [album]
+                    audio.save()
+            except Exception:
+                pass  # Atualização do arquivo física é melhor-esforço; a do DB é garantida
+        return True

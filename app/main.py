@@ -10,11 +10,12 @@ Comentários/docstrings em português; identificadores em inglês.
 
 import asyncio
 import socket
+import urllib.parse
 from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -204,6 +205,66 @@ def create_app(
     def get_history() -> list[dict]:
         """Histórico persistido (colunas: id, yt_id, title, artist, album, format, ...)."""
         return history.list(limit=100)
+
+    @fastapi_app.post("/api/history/{yt_id}/metadata")
+    def update_history_metadata(yt_id: str, body: dict) -> dict:
+        """Atualiza metadados (título, artista, álbum) no banco e nas tags do arquivo de mídia."""
+        title = (body.get("title") or "").strip()
+        artist = (body.get("artist") or "").strip()
+        album = (body.get("album") or "").strip()
+        if not title:
+            raise HTTPException(status_code=422, detail="Título é obrigatório")
+        success = history.update_tags(yt_id, title, artist, album)
+        if not success:
+            raise HTTPException(status_code=404, detail="Registro não encontrado")
+        return {"status": "ok", "yt_id": yt_id, "title": title, "artist": artist, "album": album}
+
+    @fastapi_app.post("/api/downloads/retry-failed")
+    def retry_failed_downloads() -> dict:
+        """Re-enfileira todas as faixas com status 'failed' no histórico."""
+        records = history.list(limit=1000)
+        retried = []
+        for r in records:
+            if r.get("status") == "failed" and r.get("yt_id"):
+                try:
+                    task = downloader.enqueue(
+                        r["yt_id"],
+                        r.get("format") or settings.default_format,
+                        r.get("title"),
+                        r.get("artist"),
+                        r.get("album"),
+                    )
+                    retried.append(task.to_dict())
+                except Exception:
+                    pass
+        return {"retried_count": len(retried), "tasks": retried}
+
+    @fastapi_app.get("/api/export.m3u")
+    def export_m3u() -> Response:
+        """Gera e retorna um arquivo .m3u de playlist com todas as faixas concluídas."""
+        from fastapi.responses import Response
+
+        records = history.list(limit=1000)
+        lines = ["#EXTM3U\n"]
+        local_ip = _local_ip()
+        server_url = f"http://{local_ip}:{settings.port}"
+
+        for r in records:
+            if r.get("status") in ("done", "skipped") and r.get("path"):
+                p = Path(r["path"])
+                rel = p.relative_to(settings.musicbox_dir) if p.is_relative_to(settings.musicbox_dir) else p
+                url_path = "/".join(urllib.parse.quote(part) for part in str(rel).split("/"))
+                title = r.get("title") or p.stem
+                artist = r.get("artist") or "Desconhecido"
+                lines.append(f"#EXTINF:-1,{artist} - {title}\n")
+                lines.append(f"{server_url}/api/library/{url_path}\n")
+
+        content = "".join(lines)
+        return Response(
+            content=content,
+            media_type="audio/x-mpegurl",
+            headers={"Content-Disposition": 'attachment; filename="musicbox_playlist.m3u"'},
+        )
 
     @fastapi_app.get("/api/library/{rel_path:path}")
     def library_file(rel_path: str) -> FileResponse:

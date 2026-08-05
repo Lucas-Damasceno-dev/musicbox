@@ -118,16 +118,25 @@ def _normalize_artists(artists: object) -> list[str]:
     return [str(artists)]
 
 
+def _upgrade_thumbnail(url: str | None) -> str | None:
+    """Eleva a resolução da URL da thumbnail para HD (600x600 px)."""
+    if not url:
+        return None
+    upgraded = re.sub(r"=w\d+-h\d+", "=w600-h600", url)
+    upgraded = re.sub(r"=s\d+", "=s600", upgraded)
+    return upgraded
+
+
 def _thumbnail_of(entry: dict) -> str | None:
-    """Extrai a URL da thumbnail de um entry (chave `thumbnail` ou último de `thumbnails`)."""
+    """Extrai a URL da thumbnail de um entry em alta resolução."""
     thumbnail = entry.get("thumbnail")
     if thumbnail:
-        return str(thumbnail)
+        return _upgrade_thumbnail(str(thumbnail))
     thumbnails = entry.get("thumbnails")
     if isinstance(thumbnails, list) and thumbnails:
         last = thumbnails[-1]
         if isinstance(last, dict) and last.get("url"):
-            return str(last["url"])
+            return _upgrade_thumbnail(str(last["url"]))
     return None
 
 
@@ -248,18 +257,48 @@ class YouTubeMusicClient:
         return items
 
     def search(self, query: str, max_results: int = 6) -> SearchResults:
-        """Busca por `query` e retorna artistas e álbuns com títulos.
+        """Busca por `query` e retorna artistas e álbuns com títulos (com cache LRU e suporte a URL direta)."""
+        import time
 
-        Custo: 1 request por seção (álbuns/artistas) + 1-2 requests por item para o
-        título (entries flat não trazem título no yt-dlp 2026.07.04; resolução sequencial
-        — paralelismo se mostrou mais lento por throttling do YouTube, ver "Fix round 1").
-        Itens sem título resolvível são omitidos. Sem resultados → `NotFoundError`.
-        """
-        albums = self._search_section("albums", query, max_results)
-        artists = self._search_section("artists", query, max_results)
+        query_clean = query.strip()
+        cache_key = f"{query_clean.lower()}:{max_results}"
+
+        # Verifica cache (TTL = 10 minutos)
+        if hasattr(self, "_cache") and cache_key in self._cache:
+            cached_time, cached_res = self._cache[cache_key]
+            if time.time() - cached_time < 600:
+                return cached_res
+
+        # Suporte a colar URL direta do YouTube / YouTube Music
+        yt_id_match = re.search(r"(?:v=|\/|be\/)([a-zA-Z0-9_-]{11})", query_clean)
+        if yt_id_match and ("youtube.com" in query_clean or "youtu.be" in query_clean):
+            yt_id = yt_id_match.group(1)
+            try:
+                meta = self.track_metadata(yt_id)
+                item = SearchItem(
+                    id=yt_id,
+                    title=meta.get("title") or yt_id,
+                    kind="album",
+                    url=f"https://music.youtube.com/watch?v={yt_id}",
+                )
+                res = SearchResults(artists=[], albums=[item])
+                if not hasattr(self, "_cache"):
+                    self._cache = {}
+                self._cache[cache_key] = (time.time(), res)
+                return res
+            except Exception:
+                pass
+
+        albums = self._search_section("albums", query_clean, max_results)
+        artists = self._search_section("artists", query_clean, max_results)
         if not albums and not artists:
-            raise NotFoundError(f"Nenhum resultado encontrado para a busca \"{query}\".")
-        return SearchResults(artists=artists, albums=albums)
+            raise NotFoundError(f"Nenhum resultado encontrado para a busca \"{query_clean}\".")
+        
+        res = SearchResults(artists=artists, albums=albums)
+        if not hasattr(self, "_cache"):
+            self._cache = {}
+        self._cache[cache_key] = (time.time(), res)
+        return res
 
     def artist_albums(self, artist_name: str) -> list[SearchItem]:
         """Retorna os álbuns de um artista (busca pelo nome — páginas de artista não suportadas)."""
