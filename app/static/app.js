@@ -304,15 +304,16 @@ function searchViewHtml() {
         <input
           id="search-input"
           type="search"
-          placeholder="Artista ou álbum..."
+          placeholder="Música, artista ou álbum..."
           autocomplete="off"
-          aria-label="Buscar artista ou álbum"
+          aria-label="Buscar música, artista ou álbum"
         />
         <button type="submit" class="btn btn-primary btn-search">Buscar</button>
       </form>
       <div class="tabbar" role="tablist" aria-label="Tipo de resultado">
-        <button type="button" role="tab" data-tab="artists" class="tab-btn is-active" aria-selected="true">Artistas</button>
+        <button type="button" role="tab" data-tab="songs" class="tab-btn is-active" aria-selected="true">Músicas</button>
         <button type="button" role="tab" data-tab="albums" class="tab-btn" aria-selected="false">Álbuns</button>
+        <button type="button" role="tab" data-tab="artists" class="tab-btn" aria-selected="false">Artistas</button>
       </div>
       <div id="results" class="results">
         <p class="empty-state">Digite algo para buscar.</p>
@@ -328,7 +329,6 @@ function bindSearchEvents() {
     e.preventDefault();
     const q = input.value.trim();
     if (!q) {
-      // Busca sem termo → aviso "digite algo" (o backend responderia 422)
       showSearchMessage('Digite algo para buscar.');
       input.focus();
       return;
@@ -359,10 +359,15 @@ async function runSearch(q) {
   showSearchMessage('Buscando…');
   try {
     const data = await searchApi(q);
-    state.results = { artists: data.artists || [], albums: data.albums || [] };
+    state.results = {
+      songs: data.songs || [],
+      albums: data.albums || [],
+      artists: data.artists || [],
+    };
+    if (!state.activeTab) state.activeTab = 'songs';
     renderResults();
   } catch (err) {
-    state.results = { artists: [], albums: [] };
+    state.results = { songs: [], albums: [], artists: [] };
     if (err.isNetwork) {
       showSearchMessage('Sem conexão com o servidor.');
     } else if (err.status === 404) {
@@ -381,43 +386,73 @@ async function runSearch(q) {
 function renderResults() {
   const results = document.getElementById('results');
   if (!results) return;
-  const isArtistTab = state.activeTab === 'artists';
-  const items = isArtistTab ? state.results.artists : state.results.albums;
+  const tab = state.activeTab || 'songs';
+  const items = state.results ? (state.results[tab] || []) : [];
 
   if (!items || items.length === 0) {
-    showSearchMessage(isArtistTab ? 'Nenhum artista encontrado.' : 'Nenhum álbum encontrado.');
+    const labels = { songs: 'Nenhuma música encontrada.', albums: 'Nenhum álbum encontrado.', artists: 'Nenhum artista encontrado.' };
+    showSearchMessage(labels[tab] || 'Nenhum resultado.');
     return;
   }
 
   results.innerHTML = `<ul class="card-list">${items
-    .map((item, i) => cardHtml(item, isArtistTab ? 'artist' : 'album', i))
+    .map((item, i) => cardHtml(item, tab.slice(0, -1), i))
     .join('')}</ul>`;
 
   results.querySelectorAll('.card').forEach((card) => {
-    card.addEventListener('click', () => onCardClick(card.dataset));
+    card.addEventListener('click', (e) => {
+      if (e.target.closest('.song-dl-btn')) return; // previne abrir se clicou no botão de baixar
+      onCardClick(card.dataset);
+    });
+  });
+
+  results.querySelectorAll('.song-dl-btn').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      downloadSingleTrack({
+        yt_id: btn.dataset.ytId,
+        title: btn.dataset.title,
+        artist: btn.dataset.artist,
+      });
+    });
   });
 }
 
 function cardHtml(item, kind, index) {
   const isArtist = kind === 'artist';
-  const emoji = isArtist ? '🎤' : '💿';
+  const isSong = kind === 'song';
+  const emoji = isArtist ? '🎤' : isSong ? '🎵' : '💿';
+
+  const coverImg = item.thumbnail
+    ? `<img src="${escapeHtml(item.thumbnail)}" alt="" class="cover" loading="lazy" />`
+    : `<span class="cover cover--${kind}" aria-hidden="true">${emoji}</span>`;
+
+  const metaText = isArtist
+    ? 'Artista'
+    : isSong
+    ? (item.artist ? escapeHtml(item.artist) : 'Música')
+    : 'Álbum';
+
+  const action = isSong
+    ? `<button type="button" class="btn btn-primary btn-small song-dl-btn" data-yt-id="${escapeHtml(item.id)}" data-title="${escapeHtml(item.title)}" data-artist="${escapeHtml(item.artist || '')}">${ICONS.download} Baixar</button>`
+    : ICONS.chevron;
+
   return `
     <li>
-      <button
-        type="button"
+      <div
         class="card"
         data-kind="${escapeHtml(kind)}"
         data-id="${escapeHtml(item.id)}"
         data-title="${escapeHtml(item.title)}"
         style="animation-delay:${Math.min(index * 40, 400)}ms"
       >
-        <span class="cover cover--${kind}" aria-hidden="true">${emoji}</span>
+        ${coverImg}
         <span class="card-body">
           <span class="card-title">${escapeHtml(item.title)}</span>
-          <span class="card-kind">${isArtist ? 'Artista' : 'Álbum'}</span>
+          <span class="card-kind">${metaText}</span>
         </span>
-        ${ICONS.chevron}
-      </button>
+        ${action}
+      </div>
     </li>`;
 }
 
@@ -426,7 +461,7 @@ function onCardClick({ kind, id, title }) {
     artistAlbumsApi(title)
       .then((items) => openArtist(title, items))
       .catch((err) => handleApiError(err, 'Não foi possível carregar os álbuns.'));
-  } else {
+  } else if (kind === 'album') {
     albumTracksApi(id)
       .then((album) => openAlbum(album))
       .catch((err) => handleApiError(err, 'Não foi possível carregar o álbum.'));
@@ -440,8 +475,8 @@ function artistViewHtml({ name, items }) {
   return `
     <section class="view sub-view" aria-label="Álbuns de ${escapeHtml(name)}">
       <header class="sub-header">
-        <button type="button" class="icon-btn" id="back-btn" aria-label="Voltar">${ICONS.back}</button>
-        <div class="sub-title">
+        <button type="button" class="icon-btn back-btn" id="back-btn" aria-label="Voltar">${ICONS.back}</button>
+        <div class="sub-header-info">
           <h1 class="sub-heading">${escapeHtml(name)}</h1>
           <p class="sub-meta">${albums.length} ${albums.length === 1 ? 'álbum' : 'álbuns'}</p>
         </div>
@@ -469,23 +504,31 @@ function bindArtistEvents() {
 
 function albumViewHtml(album) {
   const tracks = album.tracks || [];
+  const coverImg = album.cover_url
+    ? `<img src="${escapeHtml(album.cover_url)}" alt="" class="album-hero-cover" />`
+    : `<div class="album-hero-cover cover--album-hero">💿</div>`;
+
   return `
     <section class="view sub-view" aria-label="Álbum ${escapeHtml(album.title)}">
       <header class="sub-header">
-        <button type="button" class="icon-btn" id="back-btn" aria-label="Voltar">${ICONS.back}</button>
-        <div class="sub-title">
+        <button type="button" class="icon-btn back-btn" id="back-btn" aria-label="Voltar">${ICONS.back}</button>
+        <div class="sub-header-info">
           <h1 class="sub-heading">${escapeHtml(album.title)}</h1>
           <p class="sub-meta">${escapeHtml(album.artist)} · ${tracks.length} ${tracks.length === 1 ? 'faixa' : 'faixas'}</p>
         </div>
       </header>
 
       <div class="album-hero">
-        <span class="cover cover--hero cover--album" aria-hidden="true">💿</span>
-        <button type="button" class="btn btn-primary btn-block" id="download-album-btn">
-          ${ICONS.download}
-          Baixar álbum inteiro
-        </button>
-        <p class="album-hint">Formato atual: <strong>${formatLabel(state.format)}</strong></p>
+        ${coverImg}
+        <div class="album-hero-details">
+          <h2 class="album-hero-title">${escapeHtml(album.title)}</h2>
+          <p class="album-hero-artist">${escapeHtml(album.artist)}</p>
+          <button type="button" class="btn btn-primary btn-block" id="download-album-btn">
+            ${ICONS.download}
+            Baixar álbum inteiro (${tracks.length} faixas)
+          </button>
+          <p class="album-hint">Formato atual: <strong>${formatLabel(state.format)}</strong></p>
+        </div>
       </div>
 
       <ol class="track-list">

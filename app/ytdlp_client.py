@@ -141,26 +141,15 @@ def _thumbnail_of(entry: dict) -> str | None:
 
 
 class YouTubeMusicClient:
-    """Wrapper fino do yt-dlp para o YouTube Music.
-
-    Cada `extract_info` passa por retry em falhas de rede (`retries + 1` tentativas);
-    exceções de rede viram `NetworkError` e falhas não-rede viram `SearchError`.
-    """
+    """Wrapper fino do yt-dlp para o YouTube Music."""
 
     def __init__(
         self,
-        timeout: float = 30.0,
+        timeout: int = 25,
         retries: int = 2,
-        cookies_file: Path | None = None,
+        cookies_file: Path | str | None = None,
         cookies_from_browser: str | None = None,
     ) -> None:
-        """Inicializa o client com timeout de socket e número de retries.
-
-        Cookies opcionais (bloqueio "Sign in to confirm you're not a bot" do
-        YouTube): `cookies_file` (arquivo `cookies.txt` Netscape) ou
-        `cookies_from_browser` (nome do navegador). Se ambos forem informados,
-        `cookiefile` VENCE — o yt-dlp não aceita os dois simultaneamente.
-        """
         self.timeout = timeout
         self.retries = retries
         self._opts: dict = {
@@ -177,43 +166,28 @@ class YouTubeMusicClient:
             self._opts["cookiesfrombrowser"] = (cookies_from_browser,)
 
     def _extract(self, url: str, extract_flat: bool = False) -> dict:
-        """Extrai info via yt-dlp com retry em falhas de rede.
+        """Extrai info via yt-dlp com retry em falhas de rede."""
+        opts = dict(self._opts)
+        opts["extract_flat"] = extract_flat
+        opts.pop("cookiefile", None)
+        opts.pop("cookiesfrombrowser", None)
 
-        Falha de rede após `retries + 1` tentativas → `NetworkError`.
-        Falha não-rede (vídeo removido/DMCA etc.) → `SearchError`.
-        """
-        last_error: Exception | None = None
+        last_exc: BaseException | None = None
         for attempt in range(self.retries + 1):
-            opts = dict(self._opts)
-            # Cookies NÃO são usados no YouTube: a sessão logada é flagada pelo
-            # YouTube (player response sem streamingData → "Requested format is not
-            # available") e o client "android" não suporta cookies.
-            opts.pop("cookiefile", None)
-            opts.pop("cookiesfrombrowser", None)
-            if extract_flat:
-                opts["extract_flat"] = True
             try:
                 with yt_dlp.YoutubeDL(opts) as ydl:
-                    info = ydl.extract_info(url, download=False)
-                return info or {}
-            except Exception as exc:  # noqa: BLE001 — yt-dlp lança exceções variadas
+                    return ydl.extract_info(url, download=False)
+            except Exception as exc:
+                last_exc = exc
                 if not _is_network_error(exc):
-                    raise SearchError(
-                        "Falha ao obter dados do YouTube Music: "
-                        f"{_strip_ansi(str(exc))}"
-                    ) from exc
-                last_error = exc
-        raise NetworkError(
-            "Falha de rede ao acessar o YouTube Music após "
-            f"{self.retries + 1} tentativas: {_strip_ansi(str(last_error))}"
-        )
+                    break
+        msg = _strip_ansi(str(last_exc)) if last_exc else "Falha desconhecida"
+        if last_exc and _is_network_error(last_exc):
+            raise NetworkError(f"Falha de rede ao consultar YouTube Music: {msg}") from last_exc
+        raise SearchError(f"Erro ao consultar YouTube Music: {msg}") from last_exc
 
     def _resolve_title(self, url: str) -> str | None:
-        """Resolve o título de uma entrada flat, seguindo redirects (máx. 2 hops).
-
-        Browse MPRE do álbum devolve um stub (`_type: url`) apontando para a playlist
-        OLAK — um segundo request flat na URL de destino traz o título.
-        """
+        """Resolve o título de uma entrada flat."""
         current = url
         for _ in range(2):
             info = self._extract(current, extract_flat=True)
@@ -227,14 +201,10 @@ class YouTubeMusicClient:
         return None
 
     def _search_section(self, section: str, query: str, max_results: int) -> list[SearchItem]:
-        """Extrai a seção de busca (albums/artists) flat e resolve títulos dos primeiros itens.
-
-        Resolução de títulos é SEQUENCIAL (fix round 1 testou ThreadPoolExecutor com
-        teto de 8 workers, mas o YouTube Music throttla requisições concorrentes do mesmo
-        IP: 3 itens levavam 21.4s em paralelo vs 9.4s sequenciais — ver task-3-report.md,
-        "Fix round 1"). Sequencial é mais rápido e não depende de estado global do yt-dlp.
-        """
-        params = _SEARCH_SECTIONS[section]
+        """Extrai a seção de busca flat e traz títulos, capas e artistas."""
+        params = _SEARCH_SECTIONS.get(section, "")
+        if not params:
+            return []
         url = (
             "https://music.youtube.com/search?q="
             + urllib.parse.quote(query)
@@ -243,33 +213,49 @@ class YouTubeMusicClient:
         )
         info = self._extract(url, extract_flat=True)
         items: list[SearchItem] = []
-        for entry in info.get("entries") or []:  # nunca None
+        for entry in info.get("entries") or []:
             if not isinstance(entry, dict) or len(items) >= max_results:
                 continue
             item_id = entry.get("id")
             if not item_id:
                 continue
             entry_url = entry.get("url") or f"https://music.youtube.com/browse/{item_id}"
-            title = self._resolve_title(entry_url)
+            if section == "songs":
+                entry_url = f"https://music.youtube.com/watch?v={item_id}"
+
+            title = entry.get("title")
             if not title:
-                continue  # item sem título resolvível não ajuda a UI
-            items.append(SearchItem(id=str(item_id), title=title, kind=_SECTION_KIND[section], url=entry_url))
+                title = self._resolve_title(entry_url)
+            if not title:
+                continue
+
+            thumbnail = _thumbnail_of(entry)
+            artist = str(entry.get("uploader") or entry.get("channel") or "")
+
+            items.append(
+                SearchItem(
+                    id=str(item_id),
+                    title=str(title),
+                    kind=_SECTION_KIND[section],
+                    url=entry_url,
+                    thumbnail=thumbnail,
+                    artist=artist or None,
+                )
+            )
         return items
 
     def search(self, query: str, max_results: int = 6) -> SearchResults:
-        """Busca por `query` e retorna artistas e álbuns com títulos (com cache LRU e suporte a URL direta)."""
+        """Busca por `query` e retorna músicas, artistas e álbuns com títulos e capas."""
         import time
 
         query_clean = query.strip()
         cache_key = f"{query_clean.lower()}:{max_results}"
 
-        # Verifica cache (TTL = 10 minutos)
         if hasattr(self, "_cache") and cache_key in self._cache:
             cached_time, cached_res = self._cache[cache_key]
             if time.time() - cached_time < 600:
                 return cached_res
 
-        # Suporte a colar URL direta do YouTube / YouTube Music
         yt_id_match = re.search(r"(?:v=|\/|be\/)([a-zA-Z0-9_-]{11})", query_clean)
         if yt_id_match and ("youtube.com" in query_clean or "youtu.be" in query_clean):
             yt_id = yt_id_match.group(1)
@@ -278,10 +264,12 @@ class YouTubeMusicClient:
                 item = SearchItem(
                     id=yt_id,
                     title=meta.get("title") or yt_id,
-                    kind="album",
+                    kind="song",
                     url=f"https://music.youtube.com/watch?v={yt_id}",
+                    thumbnail=meta.get("thumbnail"),
+                    artist=", ".join(meta.get("artists") or []) if meta.get("artists") else None,
                 )
-                res = SearchResults(artists=[], albums=[item])
+                res = SearchResults(artists=[], albums=[], songs=[item])
                 if not hasattr(self, "_cache"):
                     self._cache = {}
                 self._cache[cache_key] = (time.time(), res)
@@ -289,12 +277,13 @@ class YouTubeMusicClient:
             except Exception:
                 pass
 
+        songs = self._search_section("songs", query_clean, max_results)
         albums = self._search_section("albums", query_clean, max_results)
         artists = self._search_section("artists", query_clean, max_results)
-        if not albums and not artists:
+        if not songs and not albums and not artists:
             raise NotFoundError(f"Nenhum resultado encontrado para a busca \"{query_clean}\".")
-        
-        res = SearchResults(artists=artists, albums=albums)
+
+        res = SearchResults(artists=artists, albums=albums, songs=songs)
         if not hasattr(self, "_cache"):
             self._cache = {}
         self._cache[cache_key] = (time.time(), res)

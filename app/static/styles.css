@@ -534,33 +534,108 @@ body::after {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
+  width: 100%;
+  min-width: 0;
+}
+
+.back-btn {
+  flex-shrink: 0;
+}
+
+.sub-header-info {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
 }
 
 .sub-heading {
   margin: 0;
+  font-family: var(--font-heading);
   font-size: 20px;
   font-weight: 800;
   letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
 .sub-meta {
   margin: 2px 0 0;
   font-size: 13px;
   color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-/* Hero do álbum: capa grande + baixar álbum inteiro */
+/* Hero do álbum: capa + detalhes + botão de download */
 .album-hero {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 14px;
-  padding: 10px 0 22px;
+  gap: 16px;
+  padding: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  margin-bottom: 24px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+@media (min-width: 500px) {
+  .album-hero {
+    flex-direction: row;
+    align-items: flex-start;
+    text-align: left;
+  }
+}
+
+.album-hero-cover {
+  width: 120px;
+  height: 120px;
+  border-radius: 16px;
+  object-fit: cover;
+  flex: none;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(167, 139, 250, 0.25);
+  background: var(--surface-2);
+}
+
+.cover--album-hero {
+  display: grid;
+  place-items: center;
+  font-size: 40px;
+}
+
+.album-hero-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+}
+
+.album-hero-title {
+  font-family: var(--font-heading);
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.album-hero-artist {
+  font-size: 14px;
+  color: var(--text-dim);
+  margin: 0 0 8px;
 }
 
 .album-hint {
-  margin: 0;
+  margin: 4px 0 0;
   font-size: 12px;
   color: var(--text-faint);
 }

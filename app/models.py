@@ -32,20 +32,23 @@ class Album:
 
 @dataclass
 class SearchItem:
-    """Item de resultado de busca (artista ou álbum)."""
+    """Item de resultado de busca (artista, álbum ou música avulsa)."""
 
     id: str
     title: str
-    kind: str  # "artist" | "album"
+    kind: str  # "artist" | "album" | "song"
     url: str
+    thumbnail: str | None = None
+    artist: str | None = None
 
 
 @dataclass
 class SearchResults:
-    """Resultados de busca agrupados por tipo (artistas e álbuns)."""
+    """Resultados de busca agrupados por tipo (músicas, artistas e álbuns)."""
 
     artists: list[SearchItem]
     albums: list[SearchItem]
+    songs: list[SearchItem] = field(default_factory=list)
 
 
 @dataclass

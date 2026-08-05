@@ -146,6 +146,7 @@ def create_app(
         return {
             "artists": [asdict(item) for item in results.artists],
             "albums": [asdict(item) for item in results.albums],
+            "songs": [asdict(item) for item in getattr(results, "songs", [])],
         }
 
     @fastapi_app.get("/api/artists/{artist_name}/albums")
