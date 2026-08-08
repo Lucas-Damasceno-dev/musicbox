@@ -101,3 +101,69 @@ def test_count(history: History):
     assert history.count() == 0
     history.add("yt1", "T", None, None, "mp3")
     assert history.count() == 1
+
+
+def test_get_many_ids_existentes_inexistentes_e_vazio(history: History):
+    history.add("a", "A", None, None, "mp3")
+    history.add("b", "B", None, None, "mp3")
+    rows = history.get_many(["a", "b", "nao-existe"])
+    assert set(rows) == {"a", "b"}  # inexistente fica de fora
+    assert rows["a"]["title"] == "A"
+    assert rows["b"]["title"] == "B"
+    assert history.get_many([]) == {}  # lista vazia é no-op (sem SQL)
+    assert history.get_many(["a"])["a"]["yt_id"] == "a"
+
+
+def test_cover_url_add_e_update_meta(history: History):
+    # Player com capa: add guarda a capa; update_meta só a substitui quando informada.
+    history.add("yt1", "T", None, None, "mp3", cover_url="https://c/1.jpg")
+    assert history.get("yt1")["cover_url"] == "https://c/1.jpg"
+    # Sem cover_url → COALESCE preserva a existente.
+    history.update_meta("yt1", "T2", None, None)
+    assert history.get("yt1")["cover_url"] == "https://c/1.jpg"
+    # Com cover_url → atualiza.
+    history.update_meta("yt1", "T3", None, None, cover_url="https://c/2.jpg")
+    assert history.get("yt1")["cover_url"] == "https://c/2.jpg"
+
+
+def test_add_many_cover_url(history: History):
+    history.add_many(
+        [
+            {
+                "yt_id": "a",
+                "title": "A",
+                "artist": None,
+                "album": None,
+                "format": "mp3",
+                "cover_url": "https://c/a.jpg",
+            },
+            {"yt_id": "b", "title": "B", "artist": None, "album": None, "format": "mp3"},
+        ]
+    )
+    assert history.get("a")["cover_url"] == "https://c/a.jpg"
+    assert history.get("b")["cover_url"] is None
+
+
+def test_migracao_banco_antigo_sem_cover_url(tmp_path):
+    # Bancos criados antes da coluna cover_url (player) recebem ALTER TABLE.
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    conn = sqlite3.connect(str(db))
+    conn.execute(
+        "CREATE TABLE downloads (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "yt_id TEXT NOT NULL UNIQUE, title TEXT NOT NULL, artist TEXT, album TEXT, "
+        "format TEXT NOT NULL, date TEXT NOT NULL, "
+        "status TEXT NOT NULL DEFAULT 'pending', path TEXT, error TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO downloads (yt_id, title, artist, album, format, date, status) "
+        "VALUES ('yt1', 'T', NULL, NULL, 'mp3', '2026-01-01', 'done')"
+    )
+    conn.commit()
+    conn.close()
+
+    h = History(db)
+    record = h.get("yt1")
+    assert record["yt_id"] == "yt1"  # dado preservado
+    assert "cover_url" in record and record["cover_url"] is None  # coluna migrada

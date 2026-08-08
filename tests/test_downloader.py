@@ -1,5 +1,6 @@
 """Testes do app/downloader.py: sanitização, fluxo done/failed/skipped, disco, .part, batch."""
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -7,8 +8,8 @@ import pytest
 from app.downloader import Downloader, sanitize_filename
 from app.models import Track
 
-
 # --------------------------------------------------------------- sanitize_filename
+
 
 def test_sanitize_filename_caracteres_invalidos():
     assert sanitize_filename("a/b<c>d") == "abcd"
@@ -29,6 +30,7 @@ def test_sanitize_filename_trunca_e_fallback():
 
 
 # ------------------------------------------------------- fluxo com executor fake
+
 
 def test_download_completo(settings, history, stub_client, fake_executor, wait_for):
     downloader = Downloader(settings, history, stub_client, executor=fake_executor)
@@ -118,7 +120,7 @@ def test_download_executor_falha(settings, history, stub_client, fake_executor, 
 
 def test_reenqueue_ja_done_skipped(settings, history, stub_client, fake_executor, wait_for):
     downloader = Downloader(settings, history, stub_client, executor=fake_executor)
-    t1 = downloader.enqueue("yt1", "mp3")
+    downloader.enqueue("yt1", "mp3")
     downloader.start()
     try:
         # Espera o histórico PERSISTIDO como done: o re-enqueue do mesmo yt_id
@@ -186,6 +188,42 @@ def test_enqueue_album_batch(settings, history, stub_client, fake_executor):
     assert history.count() == 3  # batch em uma transação
 
 
+def test_enqueue_album_repassa_cover(settings, history, stub_client, fake_executor):
+    # Capa da faixa (album_tracks) chega na task E no histórico (player com capa).
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    tracks = [
+        Track(yt_id=f"al{i}", title=f"Faixa {i}", number=i, cover_url=f"https://c/{i}.jpg")
+        for i in (1, 2, 3)
+    ]
+    tasks = downloader.enqueue_album(tracks, "mp3", "Artista Album", "Album X")
+    assert tasks[0].cover_url == "https://c/1.jpg"
+    assert history.get("al1")["cover_url"] == "https://c/1.jpg"
+
+
+def test_download_preenche_cover_url(settings, history, stub_client, fake_executor, wait_for):
+    # Download avulso: a capa vem do metadata do YouTube Music (track_metadata).
+    stub_client.track_metadata = lambda yt_id: {
+        "yt_id": yt_id,
+        "title": f"Titulo {yt_id}",
+        "artists": ["Artista Stub"],
+        "album": "Album Stub",
+        "track": f"Faixa {yt_id}",
+        "release_year": 2024,
+        "thumbnail": "https://example.com/cover.jpg",
+        "duration": 181,
+        "webpage_url": f"https://music.youtube.com/watch?v={yt_id}",
+    }
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-cover", "mp3")
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt-cover"), msg="download não terminou")
+        assert task.cover_url == "https://example.com/cover.jpg"
+        assert history.get("yt-cover")["cover_url"] == "https://example.com/cover.jpg"
+    finally:
+        downloader.stop()
+
+
 def test_enqueue_formato_invalido(settings, history, stub_client, fake_executor):
     downloader = Downloader(settings, history, stub_client, executor=fake_executor)
     with pytest.raises(ValueError):
@@ -203,7 +241,176 @@ def test_snapshot_e_get(settings, history, stub_client, fake_executor):
     assert [t.task_id for t in downloader.snapshot()] == [t1.task_id, t2.task_id]
 
 
+# ------------------------------------------------------------- cancelamento
+
+
+def test_cancel_tarefa_pendente_discartada(settings, history, stub_client, fake_executor, wait_for):
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt1", "mp3")
+    assert downloader.cancel(task.task_id) is True
+    assert task.status == "cancelled"
+    downloader.start()
+    try:
+        # O worker descarta a task cancelada (não vira done/skipped).
+        wait_for(
+            lambda: (history.get("yt1") or {}).get("status") == "cancelled",
+            msg="histórico não marcou cancelled",
+        )
+        assert not history.is_downloaded("yt1")
+    finally:
+        downloader.stop()
+
+
+def test_cancel_tarefa_em_execucao(settings, history, stub_client, wait_for):
+    # Executor que sinaliza quando entra em execução e segura a task até o
+    # cancelamento chegar (sem time.sleep fixo — sincronização determinística).
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_executor(*args, **kwargs):
+        started.set()
+        release.wait(5)
+        return Path("nunca-existe")
+
+    downloader = Downloader(settings, history, stub_client, executor=blocking_executor)
+    task = downloader.enqueue("yt-bloq", "mp3")
+    downloader.start()
+    try:
+        assert started.wait(5), "executor nunca foi chamado"
+        assert task.status == "running"  # garantia extra (determinística)
+        assert downloader.cancel(task.task_id) is True
+        wait_for(lambda: task.status == "cancelled", msg="task não foi cancelada")
+        wait_for(
+            lambda: (history.get("yt-bloq") or {}).get("status") == "cancelled",
+            msg="histórico não marcou cancelled",
+        )
+    finally:
+        release.set()  # libera o executor antes do stop (sem espera extra)
+        downloader.stop()
+
+
+def test_cancel_tarefa_terminal_ou_inexistente_false(
+    settings, history, stub_client, fake_executor, wait_for
+):
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    t1 = downloader.enqueue("yt1", "mp3")
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt1"), msg="download não concluiu")
+        assert downloader.cancel(t1.task_id) is False  # done → não cancela
+        assert downloader.cancel("inexistente") is False
+    finally:
+        downloader.stop()
+
+
+# ------------------------------------------------------------ pause / resume
+
+
+def test_pause_marca_paused_e_preserva_part(settings, history, stub_client, wait_for):
+    # Executor que sinaliza quando entra em execução e segura a task até o pause
+    # chegar; o "download parcial" (fake do .part) fica em temp_dir.
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_executor(yt_id, fmt, temp_dir, dest_dir, dest_filename_stem, metadata):
+        (Path(temp_dir) / "audio.opus").write_bytes(b"part")
+        started.set()
+        release.wait(5)
+        return Path(temp_dir) / "audio.opus"
+
+    downloader = Downloader(settings, history, stub_client, executor=blocking_executor)
+    task = downloader.enqueue("yt-pause", "opus")
+    downloader.start()
+    try:
+        assert started.wait(5), "executor nunca foi chamado"
+        assert task.status == "running"  # garantia extra (determinística)
+        assert downloader.pause([task.task_id]) == [task.task_id]
+        assert task.status == "paused"
+        assert task.cancel_requested is True
+        wait_for(
+            lambda: (history.get("yt-pause") or {}).get("status") == "paused",
+            msg="histórico não marcou paused",
+        )
+        release.set()  # libera o executor: o worker não pode sobrescrever paused
+        # Após o worker terminar, o .part (fake) permanece em temp_dir — a pausa
+        # preserva para o resume nativo do yt-dlp (só o startup limpa .part).
+        wait_for(lambda: downloader._queue.unfinished_tasks == 0, msg="worker não terminou")
+        part = settings.musicbox_dir / ".tmp" / task.task_id / "audio.opus"
+        assert part.exists()
+    finally:
+        release.set()
+        downloader.stop()
+
+
+def test_resume_reusa_mesma_task_e_reenfileira(
+    settings, history, stub_client, fake_executor, wait_for
+):
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-resume", "opus")
+    # Pausa enquanto ainda pending (na fila) — determinístico, sem worker.
+    assert downloader.pause([task.task_id]) == [task.task_id]
+    assert task.status == "paused"
+    resumed = downloader.resume([task.task_id])
+    assert resumed == [task.task_id]
+    assert task.status == "pending"
+    assert task.cancel_requested is False
+    # MESMA task: snapshot tem exatamente 1 task com aquele id (sem duplicata).
+    assert [s.task_id for s in downloader.snapshot()].count(task.task_id) == 1
+    # A task retomada completa normalmente quando o worker sobe (uma vez só).
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt-resume"), msg="resume não completou")
+        assert task.status == "done"
+    finally:
+        downloader.stop()
+
+
+def test_pause_lote_none_pausa_todas_ativas(settings, history, stub_client, fake_executor):
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    t1 = downloader.enqueue("yt1", "opus")
+    t2 = downloader.enqueue("yt2", "opus")
+    # Sem worker: ambas ainda pending → pause() sem ids pausa as duas.
+    assert sorted(downloader.pause()) == sorted([t1.task_id, t2.task_id])
+    assert t1.status == "paused" and t2.status == "paused"
+
+
+def test_pause_ignora_terminal(settings, history, stub_client, fake_executor, wait_for):
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt1", "mp3")
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt1"), msg="download não concluiu")
+        assert task.status == "done"
+        assert downloader.pause([task.task_id]) == []  # done não pausa
+        assert downloader.pause() == []  # nenhuma ativa para pausar
+        assert task.status == "done"
+    finally:
+        downloader.stop()
+
+
+def test_worker_descarta_paused_na_fila(settings, history, stub_client, wait_for):
+    ran = []
+
+    def recording_executor(yt_id, *args, **kwargs):
+        ran.append(yt_id)
+        return Path("nunca-existe")
+
+    downloader = Downloader(settings, history, stub_client, executor=recording_executor)
+    task = downloader.enqueue("yt-desc", "mp3")
+    assert downloader.pause([task.task_id]) == [task.task_id]  # pausa ainda pendente
+    downloader.start()
+    try:
+        # O worker pega a task da fila e a descarta (guard de paused): a task
+        # sai de `_queued` e o executor fake nunca roda.
+        wait_for(lambda: task.task_id not in downloader._queued, msg="fila não drenou")
+        assert ran == []  # executor nunca executou
+        assert task.status == "paused"
+    finally:
+        downloader.stop()
+
+
 # ----------------------------------- executor default (anônimo + client android)
+
 
 def _capture_default_executor_opts(settings, history, stub_client, monkeypatch, tmp_path):
     """Roda `_default_executor` com yt-dlp fake que captura as opts (sem rede)."""
@@ -252,19 +459,6 @@ def test_default_executor_download_anonimo_sem_cookies(
     assert opts["extractor_args"] == {"youtube": {"player_client": ["android"]}}
 
 
-def test_default_executor_ignora_cookies_mesmo_quando_configurados(
-    settings, history, stub_client, monkeypatch, tmp_path
-):
-    # Download DEVE ser anônimo: cookies configurados nas settings não vazam
-    # para as opts do executor (sessão logada quebra o player response).
-    settings.cookies_file = tmp_path / "cookies.txt"
-    settings.cookies_from_browser = "chrome"
-    opts = _capture_default_executor_opts(settings, history, stub_client, monkeypatch, tmp_path)
-    assert "cookiefile" not in opts
-    assert "cookiesfrombrowser" not in opts
-    assert opts["extractor_args"] == {"youtube": {"player_client": ["android"]}}
-
-
 def test_fail_remove_ansi_do_motivo(settings, history, stub_client, wait_for):
     def failing_executor(*args, **kwargs):
         raise RuntimeError(
@@ -285,5 +479,56 @@ def test_fail_remove_ansi_do_motivo(settings, history, stub_client, wait_for):
             "Sign in to confirm you're not a bot. Use --cookies-from-browser."
         )
         assert "\x1b[" not in task.error
+    finally:
+        downloader.stop()
+
+
+# ------------------------------------------------------ letra (.lrc) no download
+
+
+def test_download_grava_lrc_ao_lado(
+    settings, history, stub_client, fake_executor, wait_for, monkeypatch
+):
+    # fetch_lrc devolve LRC → o `.lrc` irmão é gravado com os metadados da task.
+    import app.downloader as dl_mod
+
+    calls = []
+
+    def fake_fetch(artist, title, album=None):
+        calls.append((artist, title, album))
+        return "[00:01.00]Oi"
+
+    monkeypatch.setattr(dl_mod, "fetch_lrc", fake_fetch)
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-lrc", "mp3")
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt-lrc"), msg="download não concluiu")
+        assert task.status == "done"
+        assert task.path is not None
+        lrc = Path(task.path).with_suffix(".lrc")
+        assert lrc.exists()
+        assert lrc.read_text(encoding="utf-8") == "[00:01.00]Oi"
+        # fetch_lrc chamado com os metadados resolvidos da task (stub).
+        assert calls == [("Artista Stub", "Faixa yt-lrc", "Album Stub")]
+    finally:
+        downloader.stop()
+
+
+def test_download_sem_lrc_quando_fetch_none(
+    settings, history, stub_client, fake_executor, wait_for, monkeypatch
+):
+    # fetch_lrc → None: download conclui normalmente e NENHUM `.lrc` é criado.
+    import app.downloader as dl_mod
+
+    monkeypatch.setattr(dl_mod, "fetch_lrc", lambda artist, title, album=None: None)
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-nolrc", "mp3")
+    downloader.start()
+    try:
+        wait_for(lambda: history.is_downloaded("yt-nolrc"), msg="download não concluiu")
+        assert task.status == "done"
+        assert task.path is not None
+        assert not Path(task.path).with_suffix(".lrc").exists()
     finally:
         downloader.stop()

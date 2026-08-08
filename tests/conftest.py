@@ -3,23 +3,38 @@
 IMPORTANTE: `MUSICBOX_DIR` é definido ANTES de importar `app.main` — o módulo
 constrói o `app` default no import (History em musicbox_dir/history.db).
 
+O diretório é único por processo (session-scoped) e registrado para limpeza no
+`atexit` — nada de `mkdtemp` a cada import vazando diretórios em /tmp.
+
 Nenhum teste toca a rede: yt-dlp é mockado e a integração usa `stub_client`
 + `fake_executor`. Comentários em português; identificadores em inglês.
 """
 
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
-os.environ["MUSICBOX_DIR"] = tempfile.mkdtemp(prefix="musicbox-tests-")
+_MUSICBOX_TESTS_DIR = Path(tempfile.mkdtemp(prefix="musicbox-tests-"))
+os.environ["MUSICBOX_DIR"] = str(_MUSICBOX_TESTS_DIR)
 
-import pytest
 
-from app.config import Settings
-from app.downloader import Downloader
-from app.history import History
-from app.main import create_app
-from app.models import Album, SearchItem, SearchResults, Track
+def _cleanup_musicbox_tests_dir() -> None:
+    shutil.rmtree(_MUSICBOX_TESTS_DIR, ignore_errors=True)
+
+
+atexit.register(_cleanup_musicbox_tests_dir)
+
+# noqa: E402 — imports abaixo de propósito: app.main constrói o app default no
+# import usando MUSICBOX_DIR, que precisa existir antes (linhas acima).
+import pytest  # noqa: E402
+
+from app.config import Settings  # noqa: E402
+from app.downloader import Downloader  # noqa: E402
+from app.history import History  # noqa: E402
+from app.main import create_app  # noqa: E402
+from app.models import Album, SearchItem, SearchResults, Track  # noqa: E402
 
 
 class StubClient:
@@ -34,10 +49,10 @@ class StubClient:
         self.album_error: Exception | None = None
         self.metadata_error: Exception | None = None
 
-    def search(self, query: str, max_results: int = 6) -> SearchResults:
+    def search(self, query: str, max_results: int = 6, on_section=None) -> SearchResults:
         if self.search_error is not None:
             raise self.search_error
-        return SearchResults(
+        results = SearchResults(
             artists=[
                 SearchItem(
                     id="UCstub",
@@ -55,6 +70,13 @@ class StubClient:
                 )
             ],
         )
+        if on_section is not None:
+            # Busca por streaming: entrega cada seção conforme resolve (stub síncrono).
+            on_section("songs", [])
+            on_section("albums", results.albums)
+            on_section("artists", results.artists)
+            on_section("playlists", [])
+        return results
 
     def artist_albums(self, artist_name: str) -> list[SearchItem]:
         if self.search_error is not None:

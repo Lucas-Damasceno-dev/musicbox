@@ -48,25 +48,28 @@ def test_load_settings_expande_home(monkeypatch):
     assert load_settings().musicbox_dir == Path.home() / "Music" / "musicbox"
 
 
-def test_load_settings_cookies_file_expande_home(monkeypatch):
-    monkeypatch.setenv("COOKIES_FILE", "~/cookies/youtube.txt")
-    assert load_settings().cookies_file == Path.home() / "cookies" / "youtube.txt"
+def test_load_settings_env_invalida_fallback_default(monkeypatch, tmp_path):
+    # Envs numéricas inválidas não derrubam o load: caem no default com warning.
+    monkeypatch.setenv("MUSICBOX_DIR", str(tmp_path / "m"))
+    monkeypatch.setenv("PORT", "abc")
+    monkeypatch.setenv("WORKERS", "xyz")
+    monkeypatch.setenv("SOCKET_TIMEOUT", "nao-e-numero")
+    monkeypatch.setenv("RETRIES", "muitos")
+    settings = load_settings()
+    assert settings.port == 8080
+    assert settings.workers == 2
+    assert settings.socket_timeout == 30.0
+    assert settings.retries == 2
 
 
-def test_load_settings_cookies_file_ausente_none(monkeypatch):
-    monkeypatch.delenv("COOKIES_FILE", raising=False)
-    monkeypatch.setattr(config_module, "_parse_env_file", lambda path: {})
-    assert load_settings().cookies_file is None
-
-
-def test_load_settings_cookies_from_browser_parse(monkeypatch):
-    monkeypatch.setenv("COOKIES_FROM_BROWSER", "firefox")
-    assert load_settings().cookies_from_browser == "firefox"
-
-
-def test_load_settings_cookies_from_browser_branco_none(monkeypatch):
-    monkeypatch.setenv("COOKIES_FROM_BROWSER", "   ")
-    assert load_settings().cookies_from_browser is None
+def test_load_settings_env_invalida_parcial_mantem_validas(monkeypatch, tmp_path):
+    # Uma env inválida não contamina as demais (PORT cai no default, WORKERS vale).
+    monkeypatch.setenv("MUSICBOX_DIR", str(tmp_path / "m"))
+    monkeypatch.setenv("PORT", "abc")
+    monkeypatch.setenv("WORKERS", "4")
+    settings = load_settings()
+    assert settings.port == 8080
+    assert settings.workers == 4
 
 
 def test_parse_env_file(monkeypatch, tmp_path):
