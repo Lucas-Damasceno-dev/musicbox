@@ -532,3 +532,61 @@ def test_download_sem_lrc_quando_fetch_none(
         assert not Path(task.path).with_suffix(".lrc").exists()
     finally:
         downloader.stop()
+
+
+# ------------------------------------------------------ fila persistente (Fase 5)
+
+
+def test_restore_queue_nao_duplica_task_em_memoria(settings, history, stub_client, wait_for):
+    # Regressão: enqueue ANTES de start() persiste a task na download_queue; o
+    # `_restore_queue()` do start() não pode recriar/sobrescrever a task em
+    # memória (in-memory wins) — senão cancel()/pause() agem numa duplicata e a
+    # referência original fica "running" para sempre.
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking_executor(*args, **kwargs):
+        started.set()
+        release.wait(5)
+        return Path("nunca-existe")
+
+    downloader = Downloader(settings, history, stub_client, executor=blocking_executor)
+    task = downloader.enqueue("yt-restore", "mp3")  # persistida na download_queue
+    downloader.start()  # _restore_queue() roda aqui
+    try:
+        assert started.wait(5), "executor nunca foi chamado"
+        # A MESMA instância continua registrada (o restore não sobrescreveu).
+        assert downloader._tasks[task.task_id] is task
+        assert downloader.cancel(task.task_id) is True
+        wait_for(lambda: task.status == "cancelled", msg="task não foi cancelada")
+        wait_for(
+            lambda: (history.get("yt-restore") or {}).get("status") == "cancelled",
+            msg="histórico não marcou cancelled",
+        )
+    finally:
+        release.set()
+        downloader.stop()
+
+
+def test_erro_rede_agenda_retry_nao_fail_definitivo(settings, history, stub_client, fake_executor):
+    # Erro classificado como rede (TimeoutError é OSError) e tentativas
+    # disponíveis → task `failed` com retry agendado (não `_fail` definitivo).
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-net", "mp3")
+    downloader._schedule_retry_or_fail(task, TimeoutError("net down"), "Teste")
+    assert task.status == "failed"
+    assert task._retry_count == 1
+    assert task._retry_ts is not None  # agendado pelo scheduler
+    assert task.error == "network"
+    assert (history.get("yt-net") or {}).get("status") == "failed"
+
+
+def test_erro_nao_rede_falha_definitivo(settings, history, stub_client, fake_executor):
+    # Erro não-rede (ValueError) → `_fail` definitivo: sem retry agendado.
+    downloader = Downloader(settings, history, stub_client, executor=fake_executor)
+    task = downloader.enqueue("yt-nonnet", "mp3")
+    downloader._schedule_retry_or_fail(task, ValueError("formato inválido"), "Teste")
+    assert task.status == "failed"
+    assert task._retry_count == 0
+    assert task._retry_ts is None  # definitivo
+    assert task.error and "formato" in task.error
