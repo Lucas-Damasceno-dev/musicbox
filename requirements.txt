@@ -1,5 +1,9 @@
-fastapi
-uvicorn[standard]
-yt-dlp
-pydantic
-mutagen
+# Dependências de produção — pinadas (==) para builds reproduzíveis.
+# yt-dlp é FIXO em 2026.07.04: o código (app/ytdlp_client.py, app/downloader.py)
+# documenta/comporta-se conforme essa versão (extrator sem ytmsearch, sem
+# track_number/ano, player_client=android). Não atualize sem revisar o código.
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+yt-dlp==2026.07.04
+pydantic==2.13.4
+mutagen==1.48.1

@@ -6,6 +6,16 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
+# Cobertura e lint
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Marcador de reinstalação de dependências do Makefile
+.requirements-dev.stamp
+
 # Arquivos temporários / parciais de download
 *.part
 *.tmp
@@ -19,3 +29,10 @@ cookies.txt
 
 # Artefatos internos do SDD
 .sdd/
+
+# Sessões de brainstorming visual (superpowers)
+.superpowers/
+
+# Configuração local do opencode e artefatos de teste de browser
+.opencode/
+.playwright-mcp/

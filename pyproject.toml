@@ -1,0 +1,21 @@
+# Configuração de ferramentas (pytest, ruff, coverage).
+# Este projeto não é um pacote Python instalável: não há tabela [project].
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Regras básicas: E (erros), F (pyflakes), W (warnings), I (ordem de imports).
+# Não há gate de zero violações — regras pesadas de estilo ficam de fora.
+select = ["E", "F", "W", "I"]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.coverage.run]
+# Alvo de cobertura da suíte: >= 60%.
+# NÃO usar --cov-fail-under: evita gate que quebre a suíte em execuções parciais.
+source = ["app"]
