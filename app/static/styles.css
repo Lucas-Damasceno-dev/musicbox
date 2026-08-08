@@ -2351,6 +2351,32 @@ html:not([data-theme="dark"]) .icon-moon { display: none; }
 /* Badge de status "Pausado" (mesmo padrão dos .badge-* com color-mix) */
 .badge-paused { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
 
+/* ==== Fase 5 — resiliência: banner de conexão + badge de retry ==== */
+
+/* Banner fixo "Você está offline" — oculto por padrão, mostrado via .is-visible */
+#conn-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 999;
+  display: none;
+  background: color-mix(in srgb, var(--warning) 18%, var(--surface));
+  color: var(--text);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  padding: 8px 16px;
+  text-align: center;
+  border-bottom: 1px solid var(--border);
+}
+
+#conn-banner.is-visible { display: block; }
+
+/* Badge de retry ("Reconectando · tentativa N/3") — padrão dos .badge-* */
+.badge-retry { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+
 /* Swipe das linhas de histórico/biblioteca (pointer events do app.js) */
 .row-swipe { position: relative; transition: transform .2s ease; touch-action: pan-y; }
 

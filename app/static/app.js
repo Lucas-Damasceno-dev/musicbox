@@ -14,6 +14,9 @@ const STORAGE_LIB_FMT_KEY = 'musicbox.libraryFmt';
 const STORAGE_CROSSFADE_KEY = 'musicbox.crossfade';
 const DEFAULT_FORMAT = 'opus';
 
+// Indicador de conexão (banner fixo no topo quando offline).
+const OFFLINE_BANNER_ID = 'conn-banner';
+
 // Biblioteca local (arquivos do dispositivo — nunca saem dele).
 const LOCAL_DB_NAME = 'musicbox-local-files';
 const LOCAL_DB_STORE = 'files';
@@ -158,6 +161,7 @@ const state = {
   localQuery: '', // termo de busca das músicas locais
   _localObjectUrl: null, // object URL da faixa local ATUAL (para revogar)
   _localObjectUrls: new Set(), // URLs blob: da fila local vigente (limpeza)
+  online: true, // estado da conexão (navigator.onLine; ajustado no init)
 };
 
 // ---------------------------------------------------------------- helpers
@@ -1659,8 +1663,7 @@ function bindDownloadsEvents() {
   if (retryFailed) {
     retryFailed.addEventListener('click', async () => {
       try {
-        const res = await apiFetch('/api/downloads/retry-failed', { method: 'POST' });
-        const n = Number(res.retried_count) || 0; // pode vir undefined → evita "undefined tasks"
+        const n = await retryFailedApi();
         showToast(`${n} ${n === 1 ? 'task re-enfileirada' : 'tasks re-enfileiradas'}`, 'success');
         refreshDownloads();
       } catch (err) {
@@ -1714,6 +1717,56 @@ async function refreshDownloads() {
   }
   syncDlButtons(); // tasks/histórico mudaram → atualiza botões de download visíveis
   loadStorageData(); // números de armazenamento (aba Downloads + alerta de disco)
+}
+
+// Re-enfileira todas as tasks failed (mesma rota do botão "Retentar Falhas").
+// Usada também pelo auto-retry ao voltar online (melhor esforço — o backend
+// retenta sozinho de qualquer forma).
+async function retryFailedApi() {
+  const res = await apiFetch('/api/downloads/retry-failed', { method: 'POST' });
+  return Number(res && res.retried_count) || 0; // pode vir undefined → evita "undefined tasks"
+}
+
+// Indicador de conexão: banner fixo no topo quando offline (criado como primeiro
+// filho do body, sem duplicar), removido ao voltar online.
+function updateConnBanner() {
+  const body = document.body;
+  if (!body) return;
+  if (!state.online) {
+    let banner = document.getElementById(OFFLINE_BANNER_ID);
+    if (!banner) {
+      banner = document.createElement('div');
+      banner.id = OFFLINE_BANNER_ID;
+      banner.setAttribute('role', 'status');
+      banner.textContent = 'Você está offline — os downloads serão retomados automaticamente.';
+      body.insertBefore(banner, body.firstChild); // primeiro filho do body
+    }
+    banner.classList.add('is-visible');
+    return;
+  }
+  const banner = document.getElementById(OFFLINE_BANNER_ID);
+  if (banner) {
+    banner.classList.remove('is-visible');
+    banner.remove();
+  }
+}
+
+// Volta online: esconde o banner, avisa, atualiza a fila e re-enfileira falhas.
+function onNetworkOnline() {
+  state.online = true;
+  updateConnBanner();
+  showToast('Conexão restaurada — retomando downloads', 'success');
+  refreshDownloads();
+  const hasFailed = [...state.tasks.values()].some((t) => t.status === 'failed');
+  if (hasFailed) {
+    retryFailedApi().catch((err) => handleApiError(err, 'Não foi possível retentar falhas.'));
+  }
+}
+
+// Caiu a conexão: apenas mostra o banner (o backend pausa/retoma sozinho).
+function onNetworkOffline() {
+  state.online = false;
+  updateConnBanner();
 }
 
 // Mescla preservando a ordem de inserção (novos no fim, existentes atualizados).
@@ -1810,7 +1863,12 @@ function taskCardHtml(task) {
   const chip = task.format
     ? `<span class="chip">${escapeHtml(formatLabel(task.format))}</span>`
     : '';
-  const badge = `<span class="badge ${STATUS_BADGE[status] || 'badge-pending'}">${STATUS_LABEL[status] || status}</span>`;
+  // Task failed com retry pendente (erro de rede): badge transitório de
+  // reconexão — o scheduler do backend muda para pending/queued sozinho (WS).
+  const badge =
+    status === 'failed' && task.retry_count > 0
+      ? `<span class="badge badge-retry">Reconectando · tentativa ${task.retry_count}/3</span>`
+      : `<span class="badge ${STATUS_BADGE[status] || 'badge-pending'}">${STATUS_LABEL[status] || status}</span>`;
 
   let actions = '';
   if (status === 'done' && task.path) {
@@ -4572,6 +4630,12 @@ function init() {
   state.crossfadeSeconds = loadCrossfade();
   state.mainEl = document.getElementById('app');
   state.toastRegion = document.getElementById('toast-region');
+  // Estado da conexão + banner (navigator.onLine pode ser undefined em alguns
+  // ambientes → assume online).
+  state.online = typeof navigator !== 'undefined' ? navigator.onLine : true;
+  updateConnBanner();
+  window.addEventListener('online', onNetworkOnline);
+  window.addEventListener('offline', onNetworkOffline);
 
   bindHeader();
   bindNav();
