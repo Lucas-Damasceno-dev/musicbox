@@ -21,10 +21,22 @@ from .config import Settings
 from .history import History
 from .lyrics import fetch_lrc
 from .models import DownloadTask, Track
-from .ytdlp_client import NetworkError, SearchError, YouTubeMusicClient, _strip_ansi
+from .ytdlp_client import (
+    NetworkError,
+    SearchError,
+    YouTubeMusicClient,
+    _strip_ansi,
+    is_network_error,
+)
 
 # Espaço livre mínimo exigido antes de iniciar um download (spec: disco cheio).
 _FREE_MIN_BYTES = 50 * 1024 * 1024  # 50 MB
+
+# Retry automático de falhas de rede (Fase 5): até 3 tentativas com backoff
+# 5s → 30s → 2min. A task fica `failed` com `_retry_ts` no futuro; o scheduler
+# re-enfileira quando o tempo chega (o `.part` do yt-dlp retoma do ponto).
+_RETRY_DELAYS = (5.0, 30.0, 120.0)
+_RETRY_SCHEDULER_INTERVAL = 1.0  # segundos entre varreduras do scheduler
 
 # Formatos aceitos no enqueue/enqueue_album (spec: mp3 | opus).
 # Exportado: main.py usa o mesmo conjunto no POST /api/downloads.
@@ -100,17 +112,27 @@ class Downloader:
         self._stop_flag = threading.Event()
         self._threads: list[threading.Thread] = []
         self._local = threading.local()  # task atual por thread (progress hook)
+        # Scheduler de retry (Fase 5): daemon thread que re-enfileira tasks
+        # `failed` por rede quando `_retry_ts` vence.
+        self._retry_scheduler_stop = threading.Event()
+        self._retry_scheduler_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------ API
 
     def start(self) -> None:
         """Sobe `settings.workers` threads daemon que consomem a fila.
 
-        Chamar `start()` de novo após `stop()` recria as threads.
+        Antes dos workers: restaura a fila persistida (`download_queue`) e sobe
+        o scheduler de retry. Chamar `start()` de novo após `stop()` recria as
+        threads.
         """
         if any(t.is_alive() for t in self._threads):
             return  # já rodando
         self._stop_flag.clear()
+        self._retry_scheduler_stop.clear()
+        # Restaura tasks persistidas (pending/downloading/paused/failed-com-retry)
+        # ANTES dos workers — eles consomem a fila restaurada.
+        self._restore_queue()
         self._threads = [
             threading.Thread(
                 target=self._worker_loop,
@@ -121,15 +143,24 @@ class Downloader:
         ]
         for thread in self._threads:
             thread.start()
+        self._retry_scheduler_thread = threading.Thread(
+            target=self._retry_scheduler_loop,
+            name="downloader-retry-scheduler",
+            daemon=True,
+        )
+        self._retry_scheduler_thread.start()
 
     def stop(self) -> None:
         """Sinaliza parada, aguarda a fila drenar (com timeout) e encerra as threads.
 
-        Tasks ativas recebem `cancel_requested` para os workers abortarem o quanto
-        antes (o hook do yt-dlp levanta `_CancelledError`). `queue.join` usa timeout:
-        se um worker estiver preso em rede/ffmpeg, o shutdown prossegue mesmo sem
-        drenar a fila (tasks órfãs somem com o processo).
+        Encerra o scheduler de retry primeiro (Event + join curto); depois marca
+        as tasks ativas com `cancel_requested` para os workers abortarem e drena
+        a fila com timeout (rede/ffmpeg presos não travam o shutdown).
         """
+        self._retry_scheduler_stop.set()
+        if self._retry_scheduler_thread is not None:
+            self._retry_scheduler_thread.join(timeout=2)
+            self._retry_scheduler_thread = None
         self._stop_flag.set()
         with self._lock:
             for task in self._tasks.values():
@@ -181,6 +212,7 @@ class Downloader:
             self._register(task)
             self._queue.put(task)
             self._queued.add(task.task_id)
+            self._queue_persist(task)
         self._notify(task.task_id, "pending", 0.0, "queued")
         return task
 
@@ -226,6 +258,7 @@ class Downloader:
                 self._register(task)
                 self._queue.put(task)
                 self._queued.add(task.task_id)
+                self._queue_persist(task)
                 tasks.append(task)
         for task in tasks:
             self._notify(task.task_id, "pending", 0.0, "queued")
@@ -272,6 +305,7 @@ class Downloader:
             task.cancel_requested = True
             self._notify(task.task_id, "cancelled", task.progress, "cancelled")
             self._history.mark(task.yt_id, "cancelled")
+            self._history.queue_delete(task.task_id)
             return True
 
     def pause(self, task_ids: list[str] | None = None) -> list[str]:
@@ -294,33 +328,40 @@ class Downloader:
                 task.cancel_requested = True  # aborta download em andamento (progress hook)
                 paused.append(task.task_id)
                 self._history.mark(task.yt_id, "paused")
+                self._history.queue_update_status(task.task_id, "paused")
         for task_id in paused:
             self._notify(task_id, "paused", 0.0, "paused")
         return paused
 
     def resume(self, task_ids: list[str] | None = None) -> list[str]:
-        """Retoma tasks paused re-enfileirando a MESMA task (sem duplicata; o
-        yt-dlp continua do `.part` preservado pela pausa).
+        """Retoma tasks paused — ou `failed` com retry de rede pendente — re-enfileirando
+        a MESMA task (sem duplicata; o yt-dlp continua do `.part` preservado).
 
+        O scheduler de retry chama este método quando `_retry_ts` vence (a task
+        está `failed` com `_retry_ts` no passado): volta a `pending`/`queued`,
+        limpa `cancel_requested` e `_retry_ts` (retry consumido) e re-enfileira.
         Só re-enfileira se a task não está mais na fila (`_queued`): uma task
-        pausada ainda pendente na fila não ganha uma 2ª cópia (evita download
-        duplicado/concorrente com `workers > 1`)."""
+        ainda pendente na fila não ganha uma 2ª cópia (evita download duplicado/
+        concorrente com `workers > 1`)."""
         resumed: list[str] = []
         with self._enqueue_lock, self._lock:
             targets = [
                 t
                 for t in self._tasks.values()
-                if t.status == "paused" and (task_ids is None or t.task_id in task_ids)
+                if (t.status == "paused" or (t.status == "failed" and t._retry_ts is not None))
+                and (task_ids is None or t.task_id in task_ids)
             ]
             for task in targets:
                 task.status = "pending"
                 task.stage = "queued"
                 task.cancel_requested = False
                 task.progress = 0.0
+                task._retry_ts = None  # retry consumido ao re-enfileirar
                 resumed.append(task.task_id)
                 if task.task_id not in self._queued:
                     self._queue.put(task)  # MESMA task: snapshot sem duplicata
                     self._queued.add(task.task_id)
+                self._history.queue_update_status(task.task_id, "pending")
         for task_id in resumed:
             self._notify(task_id, "pending", 0.0, "queued")
         return resumed
@@ -412,7 +453,7 @@ class Downloader:
                 elif getattr(task, "cancel_requested", False):
                     self._cancel(task)
                 else:
-                    self._fail(task, f"Erro inesperado: {exc}")
+                    self._schedule_retry_or_fail(task, exc, "Erro inesperado")
             finally:
                 self._queue.task_done()
 
@@ -428,6 +469,7 @@ class Downloader:
                 task.progress = 100.0
                 self._notify(task.task_id, "skipped", 100.0, "done")
                 self._history.mark(task.yt_id, "skipped", path=existing)
+                self._history.queue_delete(task.task_id)
                 return
         self._run(task)
 
@@ -442,6 +484,7 @@ class Downloader:
             task.progress = 0.0
             self._notify(task.task_id, "running", 0.0, "extracting")
             self._history.mark(yt_id, "running")
+            self._history.queue_update_status(task.task_id, "downloading")
 
             # Pré-checagem: espaço em disco e permissão de escrita.
             dest_root = self._settings.musicbox_dir
@@ -463,7 +506,7 @@ class Downloader:
             try:
                 metadata = self._client.track_metadata(yt_id)
             except (SearchError, NetworkError) as exc:
-                self._fail(task, f"Falha ao obter metadados: {exc}")
+                self._schedule_retry_or_fail(task, exc, "Falha ao obter metadados")
                 return
 
             if not task.artist:
@@ -515,7 +558,7 @@ class Downloader:
                     # yt-dlp: trata como cancelamento (não sobrescreve com failed).
                     self._cancel(task)
                 else:
-                    self._fail(task, f"Falha no download: {exc}")
+                    self._schedule_retry_or_fail(task, exc, "Falha no download")
                 return
             if task.status == "paused":
                 return  # pausado entre o fim do executor e o move: .part preservado
@@ -538,6 +581,7 @@ class Downloader:
                     task.progress = 100.0
                     self._notify(task.task_id, "skipped", 100.0, "done")
                     self._history.mark(yt_id, "skipped", path=str(dest_final))
+                    self._history.queue_delete(task.task_id)
                     return
                 # Existe mas não está done no histórico → sobrescreve com sufixo (2), (3)...
                 dest_final = self._suffix_path(dest_final)
@@ -566,10 +610,12 @@ class Downloader:
             task.stage = "done"
             self._notify(task.task_id, "done", 100.0, "done")
             self._history.mark(yt_id, "done", path=str(dest_final))
+            self._history.queue_delete(task.task_id)
         finally:
-            # Paused preserva o temp_dir: o `.part` do yt-dlp fica lá para o
-            # resume nativo retomar do ponto exato (mesmo outtmpl/URL/formato).
-            if temp_dir is not None and task.status != "paused":
+            # Paused e failed-com-retry-preservam o temp_dir: o `.part` do yt-dlp
+            # fica lá para o resume nativo (pause manual OU retry automático de
+            # rede) retomar do ponto exato — mesmo outtmpl/URL/formato.
+            if temp_dir is not None and task.status != "paused" and task._retry_ts is None:
                 shutil.rmtree(temp_dir, ignore_errors=True)
             self._local.task = None
 
@@ -579,25 +625,144 @@ class Downloader:
         task.stage = "cancelled"
         self._notify(task.task_id, "cancelled", task.progress, "cancelled")
         self._history.mark(task.yt_id, "cancelled")
+        self._history.queue_delete(task.task_id)
         logger.info("Download cancelado: %s", task.yt_id)
 
     def _fail(self, task: DownloadTask, motivo: str) -> None:
-        """Marca a task como `failed` com o motivo; não relança (worker não morre).
+        """Marca a task como `failed` definitivo com o motivo; não relança.
 
         O motivo passa por `_strip_ansi` (o yt-dlp imprime erros coloridos que
         apareceriam crus na UI). Task `paused` não é sobrescrita (a pausa pode
         ocorrer durante uma fase que falha — ex.: metadados — e o estado de
-        pausa deve prevalecer).
+        pausa deve prevalecer). `failed` definitivo não tem retry pendente.
         """
         if task.status == "paused":
             return  # mantém paused
         motivo = _strip_ansi(motivo)
         task.error = motivo
         task.status = "failed"
+        task._retry_ts = None  # definitivo: sem novo agendamento de retry
         # stage reflete onde falhou (stage corrente da task).
         self._notify(task.task_id, "failed", task.progress, task.stage)
         self._history.mark(task.yt_id, "failed", error=motivo)
+        self._history.queue_update_status(task.task_id, "failed", task.progress)
         logger.warning("Download falhou (%s): %s", task.yt_id, motivo)
+
+    def _queue_persist(self, task: DownloadTask) -> None:
+        """Persiste a task na `download_queue` (upsert, melhor esforço).
+
+        `created_at` é preenchido pelo history (agora-UTC) quando ausente.
+        """
+        self._history.queue_upsert(
+            {
+                "task_id": task.task_id,
+                "yt_id": task.yt_id,
+                "title": task.title or "",
+                "artist": task.artist or "",
+                "album": task.album or "",
+                "format": task.format,
+                "status": task.status,
+                "progress": task.progress,
+                "retry_count": task._retry_count,
+            }
+        )
+
+    def _schedule_retry_or_fail(
+        self, task: DownloadTask, exc: BaseException, contexto: str
+    ) -> None:
+        """Falha por rede com retry disponível → agenda; senão `_fail` definitivo.
+
+        Erro de rede (mesma classificação de `ytdlp_client.is_network_error`) com
+        `_retry_count < 3`: a task fica `failed` com `_retry_ts` no futuro (5s/30s/
+        120s) e o scheduler a re-enfileira quando o tempo vence. Erros não-rede
+        (4xx/SearchError) e a 3ª tentativa esgotada caem em `_fail` imediato.
+        """
+        if is_network_error(exc) and task._retry_count < len(_RETRY_DELAYS):
+            task.status = "failed"
+            task.stage = "failed"
+            task._retry_count += 1
+            task._retry_ts = time.monotonic() + _RETRY_DELAYS[task._retry_count - 1]
+            task.error = "network"
+            self._queue_persist(task)  # persistir também o retry_count (restore)
+            self._history.mark(task.yt_id, "failed", error="network")
+            self._notify(task.task_id, "failed", task.progress, "failed")
+            logger.warning(
+                "Download %s falhou por rede (%s) — tentativa %d/%d, retry em %.0fs",
+                task.yt_id,
+                contexto,
+                task._retry_count,
+                len(_RETRY_DELAYS),
+                _RETRY_DELAYS[task._retry_count - 1],
+            )
+            return
+        self._fail(task, f"{contexto}: {exc}")
+
+    def _retry_scheduler_loop(self) -> None:
+        """Daemon: re-enfileira tasks `failed` por rede quando `_retry_ts` vence.
+
+        Varre a cada `_RETRY_SCHEDULER_INTERVAL` (1s); para cada task `failed`
+        com `_retry_ts` no passado chama `resume([task_id])` — o resume volta a
+        `pending`/queued e o `.part` do yt-dlp continua o download do ponto exato.
+        """
+        while not self._retry_scheduler_stop.is_set():
+            with self._lock:
+                due = [
+                    t.task_id
+                    for t in self._tasks.values()
+                    if t.status == "failed"
+                    and t._retry_ts is not None
+                    and time.monotonic() >= t._retry_ts
+                ]
+            for task_id in due:
+                self.resume([task_id])
+            self._retry_scheduler_stop.wait(_RETRY_SCHEDULER_INTERVAL)
+
+    def _restore_queue(self) -> None:
+        """Restaura a fila persistida (`download_queue`) no startup.
+
+        `pending`/`downloading` → recria a task e enfileira (o `.part` garante o
+        resume do ponto exato); `paused` → recria pausada (sem enfileirar);
+        `failed` com retry pendente (0 < retry_count < 3) → recria `failed` com
+        `_retry_ts` = agora (o scheduler agenda na 1ª varredura). Demais status
+        (done/skipped/cancelled/failed definitivo) → remove da fila.
+        """
+        for row in self._history.queue_load():
+            # Task já registrada em memória (enqueue antes do start) — in-memory
+            # wins; restaurar recriaria uma duplicata que sobrescreveria a task
+            # real e quebraria cancel()/pause() nas referências existentes.
+            if row["task_id"] in self._tasks:
+                continue
+            status = row.get("status")
+            task = DownloadTask(
+                task_id=row["task_id"],
+                yt_id=row["yt_id"],
+                title=row.get("title") or row["yt_id"],
+                format=row.get("format") or self._settings.default_format,
+                artist=row.get("artist") or None,
+                album=row.get("album") or None,
+            )
+            task._retry_count = int(row.get("retry_count") or 0)
+            task.progress = float(row.get("progress") or 0.0)
+            if status in ("pending", "downloading"):
+                task.status = "pending"
+                task.stage = "queued"
+                self._register(task)
+                if task.task_id not in self._queued:
+                    self._queue.put(task)
+                    self._queued.add(task.task_id)
+            elif status == "paused":
+                task.status = "paused"
+                task.stage = "paused"
+                task.cancel_requested = True
+                self._register(task)
+            elif status == "failed" and 0 < task._retry_count < len(_RETRY_DELAYS):
+                task.status = "failed"
+                task.stage = "failed"
+                task.error = "network"
+                task._retry_ts = time.monotonic()  # retry imediato na 1ª varredura
+                self._register(task)
+            else:
+                self._history.queue_delete(row["task_id"])
 
     @staticmethod
     def _suffix_path(path: Path) -> Path:

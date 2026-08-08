@@ -6,6 +6,8 @@ A tabela `downloads` guarda um registro por `yt_id` (UNIQUE), usado para:
 Identificadores em inglês; docstrings/comentários em português.
 """
 
+from __future__ import annotations
+
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -34,6 +36,28 @@ CREATE TABLE IF NOT EXISTS downloads (
 
 _COLUMNS = "id, yt_id, title, artist, album, format, date, status, path, error, cover_url"
 
+# Fila de downloads persistida (Fase 5 — resiliência): sobrevive a restart do
+# servidor. `task_id` é a chave (tasks de downloads em memória); `retry_count`
+# guarda quantos retries de rede já foram agendados (restore agenda os restantes).
+_QUEUE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS download_queue (
+    task_id TEXT PRIMARY KEY,
+    yt_id TEXT NOT NULL,
+    title TEXT DEFAULT '',
+    artist TEXT DEFAULT '',
+    album TEXT DEFAULT '',
+    format TEXT DEFAULT '',
+    status TEXT NOT NULL,
+    progress REAL DEFAULT 0,
+    retry_count INTEGER DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+"""
+
+_QUEUE_COLUMNS = (
+    "task_id, yt_id, title, artist, album, format, status, progress, retry_count, created_at"
+)
+
 
 class History:
     """Persistência do histórico de downloads em SQLite.
@@ -54,6 +78,7 @@ class History:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as conn:
             conn.execute(_SCHEMA)
+            conn.execute(_QUEUE_SCHEMA)  # idempotente (Fase 5 — fila persistida)
             cols = {row[1] for row in conn.execute("PRAGMA table_info(downloads)")}
             if "cover_url" not in cols:
                 conn.execute("ALTER TABLE downloads ADD COLUMN cover_url TEXT")
@@ -305,3 +330,80 @@ class History:
                     "Falha ao atualizar tags de %s (yt_id=%s): %s", file_path, yt_id, exc
                 )
         return True
+
+    # ------------------------------------------------- fila persistida (Fase 5)
+
+    def queue_upsert(self, row: dict) -> None:
+        """INSERT OR REPLACE de uma linha da `download_queue` (melhor esforço).
+
+        `created_at` é preenchido com o agora-UTC se ausente. Falha de sqlite só
+        loga em warning — persistir a fila nunca pode quebrar o download.
+        """
+        conn = self._connect()
+        try:
+            with conn:
+                conn.execute(
+                    f"INSERT OR REPLACE INTO download_queue ({_QUEUE_COLUMNS}) "
+                    "VALUES (:task_id, :yt_id, :title, :artist, :album, :format, "
+                    ":status, :progress, :retry_count, :created_at)",
+                    {
+                        "task_id": row["task_id"],
+                        "yt_id": row.get("yt_id") or "",
+                        "title": row.get("title") or "",
+                        "artist": row.get("artist") or "",
+                        "album": row.get("album") or "",
+                        "format": row.get("format") or "",
+                        "status": row.get("status") or "pending",
+                        "progress": row.get("progress") or 0.0,
+                        "retry_count": row.get("retry_count") or 0,
+                        "created_at": row.get("created_at") or self._now(),
+                    },
+                )
+        except sqlite3.Error as exc:
+            logger.warning("Falha ao persistir fila (%s): %s", row.get("task_id"), exc)
+        finally:
+            conn.close()
+
+    def queue_update_status(self, task_id: str, status: str, progress: float | None = None) -> None:
+        """Atualiza `status` (e `progress`, quando informado) de uma linha da fila."""
+        conn = self._connect()
+        try:
+            with conn:
+                if progress is None:
+                    conn.execute(
+                        "UPDATE download_queue SET status = ? WHERE task_id = ?",
+                        (status, task_id),
+                    )
+                else:
+                    conn.execute(
+                        "UPDATE download_queue SET status = ?, progress = ? WHERE task_id = ?",
+                        (status, progress, task_id),
+                    )
+        except sqlite3.Error as exc:
+            logger.warning("Falha ao atualizar fila (%s → %s): %s", task_id, status, exc)
+        finally:
+            conn.close()
+
+    def queue_load(self) -> list[dict]:
+        """Retorna a fila persistida em ordem de criação; [] se erro ou vazia."""
+        conn = self._connect()
+        try:
+            rows = conn.execute(
+                f"SELECT {_QUEUE_COLUMNS} FROM download_queue ORDER BY created_at"
+            ).fetchall()
+            return [dict(r) for r in rows]
+        except sqlite3.Error:
+            return []
+        finally:
+            conn.close()
+
+    def queue_delete(self, task_id: str) -> None:
+        """Remove uma linha da `download_queue` (task concluída/cancelada)."""
+        conn = self._connect()
+        try:
+            with conn:
+                conn.execute("DELETE FROM download_queue WHERE task_id = ?", (task_id,))
+        except sqlite3.Error as exc:
+            logger.warning("Falha ao remover da fila (%s): %s", task_id, exc)
+        finally:
+            conn.close()

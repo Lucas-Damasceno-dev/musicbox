@@ -142,6 +142,11 @@ def _is_network_error(exc: BaseException) -> bool:
     return False
 
 
+# Alias público (Fase 5): o downloader usa para classificar falhas de rede no
+# retry automático com backoff. Mesma lógica do `_is_network_error` interno.
+is_network_error = _is_network_error
+
+
 def _clean_album_title(title: str) -> str:
     """Remove o prefixo 'Album - ' e o sufixo '(N Songs)' do título do álbum."""
     cleaned = _ALBUM_TITLE_PREFIX.sub("", title)
@@ -264,8 +269,7 @@ class YouTubeMusicClient:
             if self._cache_db is not None:
                 try:
                     self._cache_db.execute(
-                        "INSERT OR REPLACE INTO search_cache (key, expires, data) "
-                        "VALUES (?, ?, ?)",
+                        "INSERT OR REPLACE INTO search_cache (key, expires, data) VALUES (?, ?, ?)",
                         (key, expires, json.dumps(asdict(result), ensure_ascii=False)),
                     )
                     # Pruning leve: expira o que já passou do TTL (evita crescer sem limite).
@@ -327,8 +331,7 @@ class YouTubeMusicClient:
             if self._cache_db is not None:
                 try:
                     self._cache_db.execute(
-                        "INSERT OR REPLACE INTO search_cache (key, expires, data) "
-                        "VALUES (?, ?, ?)",
+                        "INSERT OR REPLACE INTO search_cache (key, expires, data) VALUES (?, ?, ?)",
                         (key, expires, title),
                     )
                     self._cache_db.commit()
@@ -401,10 +404,14 @@ class YouTubeMusicClient:
                 if len(items) >= max_results:
                     break
                 if title:
-                    items.append(self._build_item(entry, entry.get("id"), entry_url, section, title))
+                    items.append(
+                        self._build_item(entry, entry.get("id"), entry_url, section, title)
+                    )
         return items
 
-    def _build_item(self, entry: dict, item_id: object, entry_url: str, section: str, title: str) -> SearchItem:
+    def _build_item(
+        self, entry: dict, item_id: object, entry_url: str, section: str, title: str
+    ) -> SearchItem:
         """Monta um `SearchItem` a partir da entry flat e do título já resolvido."""
         thumbnail = _thumbnail_of(entry)
         artist = str(entry.get("uploader") or entry.get("channel") or "")
@@ -512,7 +519,7 @@ class YouTubeMusicClient:
         artists = results_by_kind["artists"]
         playlists = results_by_kind["playlists"]
         if not songs and not albums and not artists and not playlists:
-            raise NotFoundError(f"Nenhum resultado encontrado para a busca \"{query_clean}\".")
+            raise NotFoundError(f'Nenhum resultado encontrado para a busca "{query_clean}".')
 
         res = SearchResults(artists=artists, albums=albums, songs=songs, playlists=playlists)
         self._cache_set(cache_key, res)

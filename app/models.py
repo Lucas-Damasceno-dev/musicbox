@@ -4,6 +4,7 @@ Dataclasses usadas pelo app: faixas, álbuns e tarefas de download.
 Identificadores em inglês; docstrings/comentários em português.
 """
 
+import time
 from dataclasses import asdict, dataclass, field
 
 
@@ -75,9 +76,27 @@ class DownloadTask:
     error: str | None = None  # mensagem de erro quando falhou
     cover_url: str | None = None  # URL da capa (usada pelo player)
     cancel_requested: bool = False  # flag interno de cancelamento (não serializado)
+    # Metadados de retry automático (Fase 5): `_retry_count` é o número de
+    # retries já agendados (0..3) e `_retry_ts` o monotonic até o próximo retry
+    # (None = sem retry pendente). Não serializados diretamente — o `to_dict`
+    # expõe as versões públicas `retry_count`/`next_retry_in`.
+    _retry_count: int = field(default=0, repr=False, compare=False)
+    _retry_ts: float | None = field(default=None, repr=False, compare=False)
 
     def to_dict(self) -> dict:
-        """Serializa a tarefa para um dict JSON-friendly (usado no WebSocket/REST)."""
+        """Serializa a tarefa para um dict JSON-friendly (usado no WebSocket/REST).
+
+        Além dos campos próprios, expõe `retry_count` e `next_retry_in` (segundos
+        até o próximo retry automático, derivado de `_retry_ts` via monotonic) —
+        o frontend mostra "Reconectando · tentativa N/3".
+        """
         data = asdict(self)
         data.pop("cancel_requested", None)  # flag interno — não expõe na API
+        data.pop("_retry_count", None)
+        data.pop("_retry_ts", None)
+        data["retry_count"] = self._retry_count
+        if self._retry_ts is not None:
+            data["next_retry_in"] = round(max(0.0, self._retry_ts - time.monotonic()))
+        else:
+            data["next_retry_in"] = None
         return data
