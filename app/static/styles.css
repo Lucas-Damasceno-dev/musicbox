@@ -1,29 +1,168 @@
 /* MusicBox — frontend vanilla. Dark, mobile-first (~390px), sem dependências.
  * Variáveis de tema em :root; comentários em português. */
 
+/* Fontes self-hosted (woff2 locais) — Inter e Outfit, subsets do Google
+ * Fonts servidos de /static/fonts para manter o offline-first (sem CDN).
+ * Inter é variável (100-900); Outfit também (declarado 600-800, faixa usada). */
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-cyrillic-ext.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-cyrillic.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-greek-ext.woff2') format('woff2');
+  unicode-range: U+1F00-1FFF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-greek.woff2') format('woff2');
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-vietnamese.woff2') format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url('fonts/outfit-latin-ext.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'Outfit';
+  font-style: normal;
+  font-weight: 600 800;
+  font-display: swap;
+  src: url('fonts/outfit-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Tema claro (padrão na 1ª visita) — paleta "Polido": terracota rosé + âmbar pálido.
+ * O JS alterna com document.documentElement.dataset.theme = 'light' | 'dark'.
+ * html[data-theme="dark"] (abaixo) preserva o dark atual do app. */
 :root {
-  --bg: #0b0910;
-  --surface: #171122;
-  --surface-2: #201831;
-  --border: rgba(244, 241, 250, 0.09);
-  --border-strong: rgba(244, 241, 250, 0.18);
-  --text: #f4f1fa;
-  --text-dim: #a99fc4;
-  --text-faint: #6e6585;
-  --accent: #c084fc;
-  --accent-2: #f472b6;
-  --grad: linear-gradient(135deg, #a78bfa 0%, #f472b6 100%);
-  --success: #34d399;
-  --error: #fb7185;
-  --warning: #fbbf24;
-  --info: #7dd3fc;
+  --bg: #fbf7ee;
+  --surface: #ffffff;
+  --surface-2: #fdfaf3;
+  --border: #e6d9c0;
+  --border-strong: #d8c7a4;
+  --text: #2b2118;
+  --text-dim: #5f4e3c;
+  --text-faint: #7a6a52; /* ≥4.5:1 sobre fundo claro (WCAG AA) */
+  --accent: #d97a63;
+  --accent-2: #e6c87d;
+  --grad: linear-gradient(135deg, #d97a63 0%, #e6c87d 100%);
+  --success: #7f9a5a; /* oliva — estado "Baixado" com texto creme */
+  --error: #c0462e;
+  --warning: #a87a12;
+  --info: #1e7bb8;
   --radius: 14px;
   --radius-sm: 10px;
   --header-h: 60px;
   --nav-h: 64px;
-  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  --font-heading: 'Outfit', 'Inter', system-ui, sans-serif;
+  --font: Georgia, 'Times New Roman', serif;
+  --font-heading: Georgia, 'Times New Roman', serif;
   --font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+  /* Suporte a tema: componentes novos + cores derivadas */
+  --accent-soft: rgba(217, 122, 99, 0.12);
+  --accent-border: rgba(217, 122, 99, 0.30);
+  --focus-ring: rgba(217, 122, 99, 0.22);
+  --header-bg: rgba(253, 250, 243, 0.85);
+  --nav-bg: rgba(255, 255, 255, 0.92);
+  --player-bg: rgba(255, 253, 247, 0.92);
+  --shimmer: rgba(120, 95, 60, 0.08);
+  --hover: rgba(90, 70, 45, 0.06);
+  --current-bg: rgba(217, 122, 99, 0.10);
+  --play-ovl: rgba(43, 33, 24, 0.30);
+  --play-ic: #fffdf7;
+  --on-accent: #fffdf7;
+  --on-success: #fffdf7;
+  --shadow-md: 0 10px 30px rgba(120, 95, 60, 0.16);
+  --shadow-lg: 0 18px 44px rgba(120, 95, 60, 0.22);
+  --glow-accent: rgba(217, 122, 99, 0.30);
+  --mesh-1: rgba(217, 122, 99, 0.10);
+  --mesh-2: rgba(230, 200, 125, 0.12);
+  --mesh-3: rgba(160, 170, 120, 0.08);
+}
+
+/* Tema escuro — dark atual do app, valores originais preservados exatamente */
+html[data-theme="dark"] {
+  --bg: #1c1512;
+  --surface: #2a2019;
+  --surface-2: #32261d;
+  --border: #453527;
+  --border-strong: #4d3c2c;
+  --text: #f5ead8;
+  --text-dim: #b09a7d;
+  --text-faint: #a89476; /* ≥4.5:1 sobre --surface/#1c1512 (WCAG AA texto) */
+  --accent: #e07850;
+  --accent-2: #e0b45c;
+  --grad: linear-gradient(135deg, #e07850 0%, #e0b45c 100%);
+  --success: #9db87a; /* oliva claro — AA sobre superfícies escuras */
+  --error: #e0705c;
+  --warning: #e0b45c;
+  --info: #e3c98f;
+
+  --accent-soft: rgba(224, 120, 80, 0.14);
+  --accent-border: rgba(224, 120, 80, 0.40);
+  --focus-ring: rgba(224, 120, 80, 0.28);
+  --header-bg: rgba(28, 21, 18, 0.92);
+  --nav-bg: rgba(28, 21, 18, 0.92);
+  --player-bg: rgba(28, 21, 18, 0.92);
+  --shimmer: rgba(245, 234, 216, 0.06);
+  --hover: rgba(245, 234, 216, 0.05);
+  --current-bg: rgba(224, 120, 80, 0.12);
+  --play-ovl: rgba(28, 21, 18, 0.5);
+  --play-ic: #f5ead8;
+  --on-accent: #1c1512;
+  --on-success: #1c1512;
+  --shadow-md: 0 10px 30px rgba(20, 12, 6, 0.5);
+  --shadow-lg: 0 18px 44px rgba(20, 12, 6, 0.55);
+  --glow-accent: rgba(224, 120, 80, 0.35);
+  --mesh-1: rgba(224, 120, 80, 0.10);
+  --mesh-2: rgba(224, 180, 92, 0.08);
+  --mesh-3: rgba(120, 90, 50, 0.06);
 }
 
 * { box-sizing: border-box; }
@@ -47,9 +186,9 @@ body {
   z-index: -1;
   pointer-events: none;
   background:
-    radial-gradient(620px 420px at 88% -8%, rgba(167, 139, 250, 0.16), transparent 62%),
-    radial-gradient(540px 400px at -8% 28%, rgba(244, 114, 182, 0.11), transparent 62%),
-    radial-gradient(720px 520px at 50% 112%, rgba(56, 189, 248, 0.08), transparent 62%),
+    radial-gradient(620px 420px at 88% -8%, var(--mesh-1), transparent 62%),
+    radial-gradient(540px 400px at -8% 28%, var(--mesh-2), transparent 62%),
+    radial-gradient(720px 520px at 50% 112%, var(--mesh-3), transparent 62%),
     var(--bg);
 }
 
@@ -71,7 +210,7 @@ body::after {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: rgba(11, 9, 16, 0.82);
+  background: var(--header-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-bottom: 1px solid var(--border);
@@ -100,7 +239,7 @@ body::after {
   color: #1a1030;
   font-weight: 800;
   font-size: 17px;
-  box-shadow: 0 4px 18px rgba(167, 139, 250, 0.45);
+  box-shadow: 0 4px 18px var(--glow-accent);
 }
 
 .brand-name {
@@ -124,9 +263,9 @@ body::after {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  background: rgba(167, 139, 250, 0.12);
+  background: var(--accent-soft);
   color: var(--accent);
-  border: 1px solid rgba(167, 139, 250, 0.25);
+  border: 1px solid var(--accent-border);
   padding: 6px 12px;
   border-radius: 999px;
   font-size: 12px;
@@ -136,9 +275,9 @@ body::after {
 }
 
 .connect-btn:hover {
-  background: rgba(167, 139, 250, 0.22);
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
   border-color: var(--accent);
-  box-shadow: 0 0 12px rgba(167, 139, 250, 0.3);
+  box-shadow: 0 0 12px var(--glow-accent);
 }
 
 /* Modal de conexão */
@@ -152,7 +291,7 @@ body::after {
 }
 
 .modal-dialog::backdrop {
-  background: rgba(11, 9, 16, 0.75);
+  background: rgba(20, 12, 6, 0.75);
   backdrop-filter: blur(8px);
 }
 
@@ -162,7 +301,7 @@ body::after {
   border-radius: var(--radius);
   padding: 20px;
   color: var(--text);
-  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-lg);
 }
 
 .modal-head {
@@ -232,7 +371,7 @@ body::after {
 .fmt-btn.is-active {
   color: #1a1030;
   background: var(--grad);
-  box-shadow: 0 2px 12px rgba(244, 114, 182, 0.35);
+  box-shadow: 0 2px 12px var(--glow-accent);
 }
 
 /* ----------------------------------------------------------- navegação */
@@ -243,7 +382,7 @@ body::after {
   right: 0;
   bottom: 0;
   z-index: 20;
-  background: rgba(11, 9, 16, 0.9);
+  background: var(--nav-bg);
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   border-top: 1px solid var(--border);
@@ -321,7 +460,7 @@ body::after {
 .search-bar input:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 3px rgba(192, 132, 252, 0.22);
+  box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
 /* Tabs Artistas / Álbuns */
@@ -378,7 +517,7 @@ body::after {
 .btn-primary {
   background: var(--grad);
   color: #1a1030;
-  box-shadow: 0 6px 22px rgba(167, 139, 250, 0.35);
+  box-shadow: 0 6px 22px var(--glow-accent);
 }
 
 .btn-ghost {
@@ -493,6 +632,7 @@ body::after {
 
 /* Vinil: furo central + anéis, sem nenhuma imagem externa */
 .cover {
+  position: relative;
   width: 56px;
   height: 56px;
   border-radius: 12px;
@@ -502,22 +642,22 @@ body::after {
   font-size: 22px;
   border: 1px solid var(--border-strong);
   background:
-    radial-gradient(circle at 50% 50%, rgba(11, 9, 16, 0.95) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 50% 50%, rgba(14, 10, 8, 0.95) 0 5px, transparent 5.5px),
     repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 5px);
 }
 
 .cover--artist {
   background-image:
-    radial-gradient(circle at 50% 50%, rgba(11, 9, 16, 0.95) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 50% 50%, rgba(14, 10, 8, 0.95) 0 5px, transparent 5.5px),
     repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 5px),
-    linear-gradient(135deg, #3a2452, #1c1230);
+    linear-gradient(135deg, #3a2a1e, #1f1812);
 }
 
 .cover--album {
   background-image:
-    radial-gradient(circle at 50% 50%, rgba(11, 9, 16, 0.95) 0 5px, transparent 5.5px),
+    radial-gradient(circle at 50% 50%, rgba(14, 10, 8, 0.95) 0 5px, transparent 5.5px),
     repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 5px),
-    linear-gradient(135deg, #24324f, #141b33);
+    linear-gradient(135deg, #2e2a1e, #1c1812);
 }
 
 .cover--hero {
@@ -525,7 +665,7 @@ body::after {
   height: 132px;
   border-radius: 18px;
   font-size: 44px;
-  box-shadow: 0 18px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-lg);
 }
 
 /* -------------------------------------------------------- sub telas */
@@ -582,7 +722,7 @@ body::after {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   margin-bottom: 24px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--shadow-md);
 }
 
 @media (min-width: 500px) {
@@ -599,7 +739,7 @@ body::after {
   border-radius: 16px;
   object-fit: cover;
   flex: none;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(167, 139, 250, 0.25);
+  box-shadow: var(--shadow-md), 0 0 20px var(--glow-accent);
   background: var(--surface-2);
 }
 
@@ -759,8 +899,8 @@ body::after {
   font-weight: 700;
   letter-spacing: 0.03em;
   color: var(--accent);
-  background: rgba(192, 132, 252, 0.12);
-  border: 1px solid rgba(192, 132, 252, 0.25);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
   padding: 2px 8px;
   border-radius: 999px;
 }
@@ -778,7 +918,7 @@ body::after {
   height: 100%;
   border-radius: 999px;
   background: var(--grad);
-  box-shadow: 0 0 12px rgba(192, 132, 252, 0.5);
+  box-shadow: 0 0 12px var(--glow-accent);
   transition: width 0.35s ease;
 }
 
@@ -853,12 +993,12 @@ body::after {
   background: currentColor;
 }
 
-.badge-pending { color: var(--text-faint); background: rgba(110, 101, 133, 0.14); }
-.badge-running { color: var(--info); background: rgba(125, 211, 252, 0.12); }
+.badge-pending { color: var(--text-faint); background: color-mix(in srgb, var(--text-faint) 16%, transparent); }
+.badge-running { color: var(--info); background: color-mix(in srgb, var(--info) 14%, transparent); }
 .badge-running::before { animation: blink 1s infinite; }
-.badge-done { color: var(--success); background: rgba(52, 211, 153, 0.12); }
-.badge-failed { color: var(--error); background: rgba(251, 113, 133, 0.12); }
-.badge-skipped { color: var(--warning); background: rgba(251, 191, 36, 0.12); }
+.badge-done { color: var(--success); background: color-mix(in srgb, var(--success) 16%, transparent); }
+.badge-failed { color: var(--error); background: color-mix(in srgb, var(--error) 14%, transparent); }
+.badge-skipped { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
 
 @keyframes blink {
   50% { opacity: 0.3; }
@@ -935,7 +1075,7 @@ body::after {
   font-weight: 600;
   padding: 12px 16px;
   border-radius: 12px;
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-lg);
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.28s ease, transform 0.28s ease;
@@ -1002,13 +1142,19 @@ body::after {
   max-width: 680px;
   width: calc(100% - 24px);
   z-index: 30;
-  background: rgba(23, 17, 34, 0.92);
+  background: var(--player-bg);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 10px 16px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5), 0 0 20px rgba(167, 139, 250, 0.15);
+  box-shadow: var(--shadow-md), 0 0 20px var(--glow-accent);
+  transition: border-color 0.18s, box-shadow 0.18s;
+}
+
+.player-bar:hover {
+  border-color: var(--accent-border);
+  box-shadow: var(--shadow-lg), 0 0 26px var(--glow-accent);
 }
 
 .player-inner {
@@ -1016,6 +1162,28 @@ body::after {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  cursor: pointer;
+}
+
+.player-cover-mini {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  flex: none;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.player-cover-mini img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .player-info {
@@ -1056,8 +1224,1206 @@ body::after {
   cursor: pointer;
 }
 
+/* Seek bar + tempo do mini-player */
+.player-seek {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.player-seek input[type="range"],
+.player-stage-seek input[type="range"],
+.player-stage-volume input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  outline: none;
+  cursor: pointer;
+}
+
+.player-seek input[type="range"]::-webkit-slider-thumb,
+.player-stage-seek input[type="range"]::-webkit-slider-thumb,
+.player-stage-volume input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--grad);
+  box-shadow: 0 0 10px var(--glow-accent);
+  border: 0;
+}
+
+.player-seek input[type="range"]::-moz-range-thumb,
+.player-stage-seek input[type="range"]::-moz-range-thumb,
+.player-stage-volume input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--grad);
+  box-shadow: 0 0 10px var(--glow-accent);
+}
+
+.player-time {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  white-space: nowrap;
+}
+
+/* -------------------------------------------------- tela dedicada do player */
+
+.player-view {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+
+.player-stage {
+  position: relative; /* âncora do .player-tonearm (absoluto sobre o disco) */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 20px;
+  padding: 22px 8px 6px;
+}
+
+/* Disco de vinil girando: furo central + anéis + capa redonda no meio. */
+.player-disc {
+  width: min(264px, 62vw);
+  height: min(264px, 62vw);
+  border-radius: 50%;
+  flex: none;
+  position: relative;
+  display: grid;
+  place-items: center;
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 6px),
+    conic-gradient(from 0deg, #221812, #14100c, #1f1912, #171210, #221812);
+  box-shadow: var(--shadow-lg), 0 0 46px var(--glow-accent);
+}
+
+.player-disc::before {
+  content: '';
+  position: absolute;
+  width: 58px;
+  height: 58px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #14100c 0 34%, #8a3a20 36% 100%);
+  border: 2px solid rgba(244, 241, 250, 0.12);
+  z-index: 2;
+}
+
+.player-cover {
+  width: 76%;
+  height: 76%;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid rgba(244, 241, 250, 0.12);
+}
+
+.player-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.player-stage-info {
+  text-align: center;
+  min-width: 0;
+  width: 100%;
+}
+
+.player-stage-title {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 23px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-stage-artist {
+  margin: 3px 0 0;
+  font-size: 15px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-stage-seek {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+}
+
+.player-stage-controls {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  margin-top: 2px;
+}
+
+.player-nav-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  font-size: 20px;
+}
+
+.play-toggle-btn--lg {
+  width: 68px;
+  height: 68px;
+  font-size: 26px;
+  border-radius: 50%;
+  box-shadow: 0 10px 30px var(--glow-accent);
+  transition: transform 0.12s, box-shadow 0.18s;
+}
+
+.play-toggle-btn--lg:hover {
+  box-shadow: 0 12px 36px var(--glow-accent);
+  transform: scale(1.04);
+}
+
+.player-stage-volume {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  color: var(--text-faint);
+}
+
+.volume-label {
+  width: 22px;
+  flex: none;
+  display: grid;
+  place-items: center;
+}
+
+.volume-label svg {
+  width: 20px;
+  height: 20px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* Fila do player */
+.player-queue {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.player-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 6px;
+  border-bottom: 1px solid var(--border);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: background 0.16s;
+}
+
+.player-queue-row:hover { background: var(--hover); }
+
+.player-queue-row.is-current {
+  background: var(--current-bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.queue-cover {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+}
+
+.queue-row-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.queue-row-title {
+  font-size: 14px;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.queue-row-artist {
+  font-size: 12px;
+  color: var(--text-faint);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Estado vazio do player */
+.player-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 44px 0 10px;
+  text-align: center;
+}
+
+.player-empty-disc {
+  width: 130px;
+  height: 130px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 46px;
+  color: var(--text-faint);
+  background:
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.05) 0 1px, transparent 1px 5px),
+    conic-gradient(from 0deg, #221812, #14100c, #1f1912, #171210, #221812);
+  box-shadow: var(--shadow-md), 0 0 30px var(--glow-accent);
+}
+
+/* Botão "Carregar mais" da busca */
+.load-more {
+  width: 100%;
+  margin-top: 14px;
+}
+
+/* Capa no histórico */
+.history-cover {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  display: grid;
+  place-items: center;
+  font-size: 16px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+}
+
+.history-cover--vinyl {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(14, 10, 8, 0.95) 0 4px, transparent 4.5px),
+    repeating-radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06) 0 1px, transparent 1px 4px),
+    var(--surface-2);
+}
+
+/* Badge de status cancelado */
+.badge-cancelled { color: var(--text-dim); background: color-mix(in srgb, var(--text-dim) 12%, transparent); }
+
+/* Ações do histórico (tocar / remover) */
+.history-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.history-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.history-remove {
+  color: var(--text-faint);
+}
+
+.history-remove:hover {
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 45%, transparent);
+}
+
+.history-play {
+  color: var(--success);
+}
+
+.history-play:hover {
+  border-color: color-mix(in srgb, var(--success) 45%, transparent);
+}
+
+/* Botão de cancelar na fila */
+.cancel-btn {
+  color: var(--warning);
+}
+
+.cancel-btn:hover {
+  border-color: color-mix(in srgb, var(--warning) 50%, transparent);
+}
+
+/* ------------------------------------------------------- badge de downloads */
+
+.nav-btn { position: relative; }
+
+.nav-badge {
+  position: absolute;
+  top: 5px;
+  right: calc(50% - 20px);
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--error);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+
+/* --------------------------------------------------- busca por streaming */
+
+.search-loading {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.search-loading-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.search-loading-head p { margin: 0; }
+
+.spinner {
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--surface-2);
+  border-top-color: var(--accent);
+  animation: spin 0.8s linear infinite;
+}
+
+.skeleton-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.skeleton-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px;
+}
+
+.skeleton-cover {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  flex: none;
+  background: var(--surface-2);
+}
+
+.skeleton-lines {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.skeleton-lines i {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--surface-2);
+}
+
+.skeleton-lines i:last-child { width: 60%; }
+
+/* shimmer suave nos skeletons */
+.skeleton-cover,
+.skeleton-lines i {
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-cover::after,
+.skeleton-lines i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--shimmer), transparent);
+  animation: shimmer 1.4s infinite;
+}
+
+@keyframes shimmer {
+  to { transform: translateX(100%); }
+}
+
+/* ----------------------------------------------------------- playlists */
+
+.playlist-create {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.playlist-create input {
+  flex: 1;
+  min-width: 0;
+  height: 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  padding: 0 12px;
+  font: inherit;
+  font-size: 14px;
+}
+
+.playlist-create input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.playlists-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.playlist-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+}
+
+.playlist-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.playlist-name {
+  flex: 1;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.playlist-count {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+}
+
+.playlist-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.pl-export-btn { text-decoration: none; }
+
+.pl-tracks { margin-top: 10px; }
+
+.pl-track-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pl-track-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pl-track-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pl-track-title.is-unplayable {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+
+/* Extras da tela do player (offline + playlist) */
+.player-stage-extras {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.pl-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 220px;
+  height: 38px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 0 10px;
+}
+
+.pl-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Faixas da biblioteca: linha clicável com ▶ */
+.track-row--play {
+  cursor: pointer;
+  transition: background 0.16s;
+}
+
+.track-row--play:hover { background: var(--hover); }
+
+.track-row--play .track-dl {
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+/* ============================================================
+   Fase 1 — componentes (contrato de classes com a lane JS)
+   Tema claro + dark via variáveis; nada de hex solto aqui.
+   ============================================================ */
+
+/* Toggle de tema claro/escuro no header (ícone visível = tema atual) */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  cursor: pointer;
+  transition: color 0.18s, background 0.18s, border-color 0.18s;
+}
+
+.theme-toggle:hover { color: var(--text); border-color: var(--border-strong); }
+
+.theme-toggle svg { display: block; }
+
+html[data-theme="dark"] .icon-sun { display: none; }
+html:not([data-theme="dark"]) .icon-moon { display: none; }
+
+/* Botão de download secundário dos cards (ghost de seta) */
+.dl-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.dl-btn:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+.dl-btn svg {
+  width: 12px;
+  height: 12px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dl-btn.is-downloading { border-color: var(--accent); background: var(--accent-soft); }
+.dl-btn.is-downloaded { border-color: transparent; background: var(--success); color: var(--on-success); }
+
+.dl-spinner { display: grid; place-items: center; }
+.dl-spinner svg { width: 12px; height: 12px; animation: dl-spin 0.9s linear infinite; }
+.dl-pct { line-height: 1; }
+
+@keyframes dl-spin { to { transform: rotate(360deg); } }
+
+/* CTA de álbum — "Baixar Álbum · N faixas" (JS monta o texto) */
+.dl-album-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-top: 8px;
+  padding: 7px 12px;
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-border);
+  border-radius: 9px;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
+}
+
+.dl-album-btn:hover { border-color: var(--accent); }
+
+.dl-album-btn svg {
+  width: 13px;
+  height: 13px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.dl-album-btn.is-downloading { border-color: var(--accent); }
+.dl-album-btn.is-downloaded { border-color: transparent; background: var(--success); color: var(--on-success); }
+
+/* Card tocando (ação primária = tocar) + overlay de play no cover */
+.card { position: relative; }
+.card.is-playing { border-color: var(--accent); }
+.card.is-playing .card-title { color: var(--accent); }
+
+.card-play-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: var(--play-ovl);
+  opacity: 0;
+  transition: opacity 0.18s;
+}
+
+.card-play-overlay svg {
+  width: 20px;
+  height: 20px;
+  color: var(--play-ic);
+  fill: currentColor;
+  filter: drop-shadow(0 2px 6px rgba(0, 0, 0, 0.35));
+}
+
+.card.is-playing .card-play-overlay,
+.card:hover .card-play-overlay { opacity: 1; }
+
+/* Equalizer animado (3 barras) ao lado do título — JS injeta os <i> */
+.eq-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 12px;
+  margin-left: 6px;
+  vertical-align: baseline;
+}
+
+.eq-bars i {
+  width: 2.5px;
+  border-radius: 1px;
+  background: var(--accent);
+  transform-origin: bottom;
+  animation: eq 1s ease-in-out infinite;
+}
+
+.eq-bars i:nth-child(1) { height: 6px; }
+.eq-bars i:nth-child(2) { height: 11px; animation-delay: 0.15s; }
+.eq-bars i:nth-child(3) { height: 8px; animation-delay: 0.3s; }
+
+@keyframes eq {
+  0%, 100% { transform: scaleY(0.5); }
+  50% { transform: scaleY(1); }
+}
+
+/* Biblioteca — controles: segmento de visualização + filtros de formato */
+.library-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+#library-segments {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.segment-btn {
+  flex: 1;
+  padding: 9px 6px;
+  border: 0;
+  background: transparent;
+  border-radius: 9px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s;
+}
+
+.segment-btn.is-active { background: var(--accent); color: var(--on-accent); }
+
+#library-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.filter-chip {
+  padding: 5px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+
+.filter-chip.is-active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+/* Biblioteca — grupos (por artista/álbum) e linhas */
+.lib-group { margin-bottom: 18px; }
+
+.lib-group-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0 0 8px;
+  font-family: var(--font-heading);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.lib-group-head small {
+  font-size: 11px;
+  color: var(--text-faint);
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.lib-group-items { list-style: none; margin: 0; padding: 0; }
+
+.lib-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 4px;
+  border-bottom: 1px solid var(--border);
+}
+
+.lib-row-cover {
+  width: 44px;
+  height: 44px;
+  border-radius: 10px;
+  flex: none;
+  object-fit: cover;
+  display: grid;
+  place-items: center;
+  font-size: 17px;
+  color: var(--text-faint);
+  background: var(--surface-2);
+  border: 1px solid var(--border-strong);
+}
+
+.lib-row-meta {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.lib-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-row-sub {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.lib-row-play {
+  width: 32px;
+  height: 32px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--grad);
+  color: #1a1030;
+  border: 0;
+  cursor: pointer;
+  transition: transform 0.12s, box-shadow 0.18s;
+}
+
+.lib-row-play svg { width: 13px; height: 13px; }
+
+.lib-row-play:hover { transform: scale(1.06); box-shadow: 0 0 14px var(--glow-accent); }
+
+/* ==== Fase 4 — biblioteca local (segmento "Local") ==== */
+
+/* Botão "Adicionar pasta" — padrão outline da biblioteca */
+.btn-add-folder {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.18s, color 0.18s, border-color 0.18s;
+}
+
+.btn-add-folder:hover { background: var(--hover); color: var(--text); }
+
+.btn-add-folder:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* Badge "LOCAL" nas linhas de arquivos do dispositivo (reusa .badge base) */
+.lib-row.is-local .badge {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Dica de re-seleção da pasta (arquivos não disponíveis na sessão) */
+.local-hint {
+  color: var(--text-faint);
+  font-style: italic;
+  font-size: 0.85rem;
+  margin: 10px 4px 0;
+}
+
+/* Estado vazio da biblioteca local — fita cassete + CTA centralizados */
+.local-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 24px 16px;
+  text-align: center;
+}
+
+.local-empty svg {
+  width: 170px;
+  height: 170px;
+  color: var(--accent); /* pinta a cassete (fill=currentColor) com o accent do tema */
+}
+
+/* ==== Fase 3 — player rico: tonearm, drag handle, crossfade ==== */
+
+/* Agulha de toca-discos — absoluta sobre o disco, ancorada no .player-stage
+   (NÃO no .player-disc, que gira via rAF). O JS só alterna .is-playing;
+   a transição faz levantar/abaixar. Não bloqueia cliques no disco. */
+.player-tonearm {
+  position: absolute;
+  left: 50%;
+  top: calc(22px + 30px); /* pivot 30px abaixo do topo do disco: ponta levantada
+                             fica no gap (sem sobrepor o drag-handle) */
+  width: 0;
+  height: 0;
+  transform-origin: 0 0; /* pivot no topo do disco */
+  transform: rotate(-125deg); /* levantada: ponta ~97px à direita e ~68px ACIMA
+                                 do pivot — claramente para fora do vinil */
+  transition: transform 0.6s ease;
+  pointer-events: none;
+  z-index: 3; /* acima do furo (.player-disc::before z2) e da capa (z1) */
+}
+
+.player-tonearm::before { /* braço fino metálico, do topo até o groove */
+  content: '';
+  position: absolute;
+  left: -1.5px;
+  top: 0;
+  width: 3px;
+  height: 118px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, var(--text-dim), var(--border-strong));
+}
+
+.player-tonearm::after { /* cabeça da agulha (cartucho) na ponta */
+  content: '';
+  position: absolute;
+  left: -5.5px;
+  top: 112px;
+  width: 12px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--text-dim);
+}
+
+.player-tonearm.is-playing { transform: rotate(0deg); } /* abaixada sobre o vinil */
+
+/* Alça de arraste (bottom sheet) no topo da tela do player */
+.player-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  flex: none;
+  cursor: grab;
+  touch-action: none;
+}
+
+.player-drag-handle::before { /* barra visual 36×4 */
+  content: '';
+  width: 36px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+.player-drag-handle:active { cursor: grabbing; }
+
+/* Minimizar por gesto: transição de snap no estado normal,
+   desativada durante o arraste (o JS usa style.transform na #player-view) */
+.player-view { transition: transform 0.25s ease; }
+
+#player-view.is-dragging { transition: none; }
+
+/* Crossfade (0–12s) — controle discreto, mesmo padrão de slider do player */
+.crossfade-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 4px 0;
+}
+
+.crossfade-control label {
+  font-family: var(--font-heading);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+#crossfade-range {
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  outline: none;
+  cursor: pointer;
+}
+
+#crossfade-range::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--grad);
+  box-shadow: 0 0 10px var(--glow-accent);
+  border: 0;
+}
+
+#crossfade-range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--grad);
+  box-shadow: 0 0 10px var(--glow-accent);
+}
+
+#crossfade-label {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ==== Armazenamento (aba Downloads) ==== */
+.storage-card { background: var(--surface); border: 1px solid var(--border);
+  border-radius: 14px; padding: 14px; margin-bottom: 14px; box-shadow: var(--shadow-md); }
+.storage-warn { border-color: var(--warning); }
+.storage-alert { color: var(--warning); font-size: 0.85rem; margin-bottom: 10px; }
+.storage-block + .storage-block { margin-top: 12px; padding-top: 12px; border-top: 1px dashed var(--border); }
+.storage-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.storage-head strong { font-size: 0.85rem; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-dim); }
+.storage-refresh { background: none; border: none; color: var(--text-dim); cursor: pointer; padding: 4px; border-radius: 6px; }
+.storage-refresh:hover { color: var(--accent); background: var(--hover); }
+.storage-bar { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin-bottom: 6px; }
+.storage-fill { height: 100%; border-radius: 3px; background: var(--grad); transition: width .3s ease; }
+.storage-row { display: flex; justify-content: space-between; font-size: 0.8rem; color: var(--text-dim); margin-bottom: 4px; }
+.storage-actions { display: flex; gap: 8px; margin-top: 8px; }
+
+/* Badge de status "Pausado" (mesmo padrão dos .badge-* com color-mix) */
+.badge-paused { color: var(--warning); background: color-mix(in srgb, var(--warning) 16%, transparent); }
+
+/* Swipe das linhas de histórico/biblioteca (pointer events do app.js) */
+.row-swipe { position: relative; transition: transform .2s ease; touch-action: pan-y; }
+
+/* Variante ghost do .dl-btn (ações de storage) — o .dl-btn base já é ghost;
+   aqui só o estado desabilitado (sem órfãos/cache para limpar) */
+.dl-btn.ghost:disabled { opacity: 0.45; cursor: not-allowed; }
+
+/* ==== Fase 4 — letras sincronizadas (LRC) ==== */
+
+/* Seletor de painel do player: Fila | Letras (padrão dos segment-btns) */
+.player-pane-switch {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 12px;
+}
+
+.pane-btn {
+  padding: 6px 14px;
+  border: 1px solid var(--border);
+  background: transparent;
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-family: var(--font);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.18s, background 0.18s, border-color 0.18s;
+}
+
+.pane-btn:hover { background: var(--hover); }
+
+.pane-btn.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 700;
+}
+
+/* Painel de letras — altura própria com scroll */
+#player-lyrics {
+  max-height: 42vh;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+/* Linha de letra — estilo karaokê */
+.lyric-line {
+  color: var(--text-dim);
+  padding: 5px 10px;
+  border-radius: 8px;
+  border-left: 3px solid transparent; /* evita shift de layout ao ativar */
+  line-height: 1.5;
+  transition: color 0.2s, background 0.2s;
+}
+
+.lyric-line.is-active {
+  color: var(--text);
+  background: var(--accent-soft);
+  font-weight: 700;
+  border-left-color: var(--accent);
+}
+
+/* Estado vazio/erro */
+.lyrics-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 16px 8px;
+  text-align: center;
+  font-size: 0.9rem;
+}
+
 @media (min-width: 640px) {
-  .card-list { display: grid; grid-template-columns: repeat(2, 1fr); }
+  .card-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 @media (prefers-reduced-motion: reduce) {

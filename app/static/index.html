@@ -3,14 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0910" />
+  <meta name="theme-color" content="#fbf7ee" />
   <meta name="description" content="MusicBox — baixe músicas do YouTube Music para ouvir offline no celular." />
   <title>MusicBox — baixe músicas para ouvir offline</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%23a78bfa'/%3E%3Cstop offset='1' stop-color='%23f472b6'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='24' height='24' rx='6' fill='%230b0910'/%3E%3Cpath d='M9 17V7l7-1.5V15' fill='none' stroke='url(%23g)' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Ccircle cx='7' cy='17' r='2' fill='%23f472b6'/%3E%3Ccircle cx='14' cy='15' r='2' fill='%23a78bfa'/%3E%3C/svg%3E" />
+  <link rel="apple-touch-icon" href="/static/icons/icon-192.png" />
   <link rel="manifest" href="/static/manifest.json" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+  <!-- Fontes self-hosted em /static/fonts (offline-first, sem CDN) — ver styles.css -->
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
@@ -24,17 +23,40 @@
         <span class="brand-name">MusicBox</span>
       </div>
       <div class="header-actions">
+        <button type="button" id="theme-toggle" class="theme-toggle" aria-label="Alternar tema claro/escuro" aria-pressed="false">
+          <svg class="icon-sun" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="12" cy="12" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2v2m0 16v2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M2 12h2m16 0h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          <svg class="icon-moon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
+        </button>
         <button type="button" id="connect-btn" class="connect-btn" aria-label="Conectar celular">
           <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="18" r="1" fill="currentColor"/></svg>
           <span>Celular</span>
         </button>
         <div class="format-toggle" role="group" aria-label="Formato de download">
-          <button type="button" class="fmt-btn" data-format="mp3" aria-pressed="true">MP3 320</button>
-          <button type="button" class="fmt-btn" data-format="opus" aria-pressed="false">Opus 160</button>
+          <button type="button" class="fmt-btn is-active" data-format="opus" aria-pressed="true">Opus 160</button>
+          <button type="button" class="fmt-btn" data-format="mp3" aria-pressed="false">MP3 320</button>
         </div>
       </div>
     </div>
   </header>
+
+  <!-- Modal de token de acesso (autenticação opcional do servidor) -->
+  <dialog id="token-modal" class="modal-dialog">
+    <div class="modal-content">
+      <header class="modal-head">
+        <h2>Acesso protegido</h2>
+      </header>
+      <form id="token-form" class="modal-body">
+        <p class="modal-hint">Este servidor exige um token de acesso. Digite o valor de <code>MUSICBOX_TOKEN</code> definido no servidor.</p>
+        <div class="form-group">
+          <label for="token-input">Token de acesso</label>
+          <input type="password" id="token-input" class="search-input" required autocomplete="off" />
+        </div>
+        <div class="modal-actions">
+          <button type="submit" class="btn btn-primary">Entrar</button>
+        </div>
+      </form>
+    </div>
+  </dialog>
 
   <!-- Modal de conexão via QR Code / URL local -->
   <dialog id="connect-modal" class="modal-dialog">
@@ -85,9 +107,10 @@
   <!-- Conteúdo: as "telas" são seções renderizadas pelo app.js -->
   <main id="app" class="app-main"></main>
 
-  <!-- Player de Áudio Flutuante (Mini-Player Fixo) -->
+  <!-- Player de Áudio Flutuante (Mini-Player Fixo) — clicar no corpo abre a tela do Player -->
   <div id="player-bar" class="player-bar" hidden>
-    <div class="player-inner">
+    <div class="player-inner" id="player-bar-open">
+      <span class="player-cover-mini" id="player-mini-cover" aria-hidden="true">♪</span>
       <div class="player-info">
         <span id="player-title" class="player-title">Nenhuma música tocando</span>
         <span id="player-artist" class="player-artist">MusicBox</span>
@@ -96,7 +119,12 @@
         <button type="button" id="player-prev-btn" class="icon-btn" aria-label="Anterior">⏮</button>
         <button type="button" id="player-play-btn" class="icon-btn play-toggle-btn" aria-label="Reproduzir/Pausar">▶</button>
         <button type="button" id="player-next-btn" class="icon-btn" aria-label="Próxima">⏭</button>
+        <button type="button" id="player-close-btn" class="icon-btn" aria-label="Fechar player">✕</button>
       </div>
+    </div>
+    <div class="player-seek">
+      <input id="player-seek" type="range" min="0" max="1000" value="0" aria-label="Posição da música" />
+      <span id="player-time" class="player-time">0:00 / 0:00</span>
     </div>
     <audio id="global-audio-element" preload="none"></audio>
   </div>
@@ -106,8 +134,16 @@
     Servidor sem ffmpeg: downloads não funcionarão
   </div>
 
-  <!-- Navegação inferior fixa: Buscar | Downloads (aba fixa) -->
+  <!-- Navegação inferior fixa: Player | Biblioteca | Busca | Downloads -->
   <nav class="bottom-nav" aria-label="Navegação principal">
+    <button type="button" class="nav-btn" data-tab="player">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 17V5l12-2v12"/><circle cx="7" cy="17" r="2"/><circle cx="17" cy="15" r="2"/></svg>
+      <span>Player</span>
+    </button>
+    <button type="button" class="nav-btn" data-tab="biblioteca">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
+      <span>Biblioteca</span>
+    </button>
     <button type="button" class="nav-btn is-active" data-tab="buscar" aria-current="page">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
       <span>Buscar</span>
@@ -115,6 +151,7 @@
     <button type="button" class="nav-btn" data-tab="downloads">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4v10m0 0 4-4m-4 4-4-4"/><path d="M5 20h14"/></svg>
       <span>Downloads</span>
+      <span id="downloads-badge" class="nav-badge" hidden></span>
     </button>
   </nav>
 
