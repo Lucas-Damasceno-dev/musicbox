@@ -5,9 +5,12 @@ variáveis de ambiente reais, com precedência: env vars > `.env` > defaults.
 Sem dependência externa (python-dotenv NÃO é usado).
 """
 
+import logging
 import os
 import shutil
 from pathlib import Path
+
+logger = logging.getLogger("musicbox")
 
 
 class Settings:
@@ -20,23 +23,19 @@ class Settings:
         workers: Número de downloads simultâneos (env `WORKERS`).
         socket_timeout: Timeout de socket em segundos (env `SOCKET_TIMEOUT`).
         retries: Número de tentativas de download (env `RETRIES`).
-        cookies_file: Caminho de um arquivo `cookies.txt` (formato Netscape) para o
-            yt-dlp (env `COOKIES_FILE`); `None` se não configurado.
-        cookies_from_browser: Nome do navegador (`chrome`, `firefox`, ...) para o
-            yt-dlp ler cookies direto (env `COOKIES_FROM_BROWSER`); `None` se não
-            configurado. Se `cookies_file` também estiver definido, ele vence.
+        auth_token: Token de acesso compartilhado exigido nas rotas `/api/*`
+            (env `MUSICBOX_TOKEN`); `None` desativa a autenticação.
     """
 
     def __init__(
         self,
         port: int = 8080,
         musicbox_dir: Path = Path.home() / "Music" / "musicbox",
-        default_format: str = "mp3",
+        default_format: str = "opus",
         workers: int = 2,
         socket_timeout: float = 30.0,
         retries: int = 2,
-        cookies_file: Path | None = None,
-        cookies_from_browser: str | None = None,
+        auth_token: str | None = None,
     ) -> None:
         self.port = port
         self.musicbox_dir = musicbox_dir
@@ -44,8 +43,7 @@ class Settings:
         self.workers = workers
         self.socket_timeout = socket_timeout
         self.retries = retries
-        self.cookies_file = cookies_file
-        self.cookies_from_browser = cookies_from_browser
+        self.auth_token = auth_token
 
     @property
     def has_ffmpeg(self) -> bool:
@@ -83,26 +81,38 @@ def load_settings() -> Settings:
     def _get(key: str, default: str) -> str:
         return os.environ.get(key, env_values.get(key, default))
 
+    def _parse_int(name: str, default: int) -> int:
+        raw = _get(name, str(default))
+        try:
+            return int(raw)
+        except ValueError:
+            logger.warning(
+                "MUSICBOX: %s inválido (%r) — usando o padrão %s", name, raw, default
+            )
+            return default
+
+    def _parse_float(name: str, default: float) -> float:
+        raw = _get(name, str(default))
+        try:
+            return float(raw)
+        except ValueError:
+            logger.warning(
+                "MUSICBOX: %s inválido (%r) — usando o padrão %s", name, raw, default
+            )
+            return default
+
     musicbox_dir_raw = _get("MUSICBOX_DIR", str(Path.home() / "Music" / "musicbox"))
     musicbox_dir = Path(os.path.expandvars(os.path.expanduser(musicbox_dir_raw)))
 
-    # COOKIES_FILE: ausente/em-branco → None; `~`/`$HOME` expandidos (igual MUSICBOX_DIR).
-    cookies_file_raw = _get("COOKIES_FILE", "").strip()
-    cookies_file = (
-        Path(os.path.expandvars(os.path.expanduser(cookies_file_raw)))
-        if cookies_file_raw
-        else None
-    )
-    # COOKIES_FROM_BROWSER: string simples; ausente/em-branco → None.
-    cookies_from_browser = _get("COOKIES_FROM_BROWSER", "").strip() or None
+    # MUSICBOX_TOKEN: ausente/em-branco → None (autenticação desativada).
+    auth_token = _get("MUSICBOX_TOKEN", "").strip() or None
 
     return Settings(
-        port=int(_get("PORT", "8080")),
+        port=_parse_int("PORT", 8080),
         musicbox_dir=musicbox_dir,
-        default_format=_get("DEFAULT_FORMAT", "mp3"),
-        workers=int(_get("WORKERS", "2")),
-        socket_timeout=float(_get("SOCKET_TIMEOUT", "30.0")),
-        retries=int(_get("RETRIES", "2")),
-        cookies_file=cookies_file,
-        cookies_from_browser=cookies_from_browser,
+        default_format=_get("DEFAULT_FORMAT", "opus"),
+        workers=_parse_int("WORKERS", 2),
+        socket_timeout=_parse_float("SOCKET_TIMEOUT", 30.0),
+        retries=_parse_int("RETRIES", 2),
+        auth_token=auth_token,
     )

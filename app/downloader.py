@@ -8,15 +8,18 @@ SQLite. Um executor pode ser injetado nos testes para validar a lógica sem rede
 Identificadores em inglês; docstrings/comentários em português.
 """
 
+import logging
 import queue
 import shutil
 import threading
+import time
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 
 from .config import Settings
 from .history import History
+from .lyrics import fetch_lrc
 from .models import DownloadTask, Track
 from .ytdlp_client import NetworkError, SearchError, YouTubeMusicClient, _strip_ansi
 
@@ -24,10 +27,26 @@ from .ytdlp_client import NetworkError, SearchError, YouTubeMusicClient, _strip_
 _FREE_MIN_BYTES = 50 * 1024 * 1024  # 50 MB
 
 # Formatos aceitos no enqueue/enqueue_album (spec: mp3 | opus).
-_VALID_FORMATS = {"mp3", "opus"}
+# Exportado: main.py usa o mesmo conjunto no POST /api/downloads.
+VALID_FORMATS = {"mp3", "opus"}
 
 # Sufixos de arquivos de download interrompido (yt-dlp) removidos no startup.
 _PARTIAL_SUFFIXES = {".part", ".ytdl"}
+
+# Teto de tasks em memória: acima dele, as tasks terminais mais antigas são
+# podadas (as ativas — pending/running — nunca são removidas).
+_TASKS_CAP = 300
+
+# Status terminais: a task não executa mais (poda, dedupe e stop usam isso).
+# `paused` entra aqui: uma task pausada não conta como "ativa" no dedupe
+# (_find_active) nem é preservada pelo stop; a retomada re-enfileira a MESMA task.
+_TERMINAL_STATUSES = ("done", "failed", "skipped", "cancelled", "paused")
+
+logger = logging.getLogger("musicbox")
+
+
+class _CancelledError(Exception):
+    """Levantada no progress hook quando o usuário cancela um download em execução."""
 
 
 def sanitize_filename(nome: str) -> str:
@@ -70,6 +89,13 @@ class Downloader:
         self._queue: queue.Queue[DownloadTask] = queue.Queue()
         self._tasks: dict[str, DownloadTask] = {}
         self._lock = threading.Lock()
+        # task_ids atualmente NA fila (ou já desenfileirados e em processamento).
+        # Usado pelo resume para não re-enfileirar uma task pausada que ainda está
+        # pendente na fila (evita 2ª cópia → download duplicado com workers>1).
+        self._queued: set[str] = set()
+        # Serializa check+add+put do enqueue/enqueue_album: dois POSTs simultâneos
+        # do mesmo yt_id não podem criar 2 tasks (race de dedupe).
+        self._enqueue_lock = threading.Lock()
         self._listeners: list[Callable[[str, str, float, str], None]] = []
         self._stop_flag = threading.Event()
         self._threads: list[threading.Thread] = []
@@ -97,9 +123,26 @@ class Downloader:
             thread.start()
 
     def stop(self) -> None:
-        """Sinaliza parada, aguarda a fila drenar e encerra as threads."""
+        """Sinaliza parada, aguarda a fila drenar (com timeout) e encerra as threads.
+
+        Tasks ativas recebem `cancel_requested` para os workers abortarem o quanto
+        antes (o hook do yt-dlp levanta `_CancelledError`). `queue.join` usa timeout:
+        se um worker estiver preso em rede/ffmpeg, o shutdown prossegue mesmo sem
+        drenar a fila (tasks órfãs somem com o processo).
+        """
         self._stop_flag.set()
-        self._queue.join()  # espera todas as tasks serem consumidas
+        with self._lock:
+            for task in self._tasks.values():
+                if task.status not in _TERMINAL_STATUSES:
+                    task.cancel_requested = True
+        # `queue.Queue.join()` não aceita timeout (Python 3.12); a condição
+        # interna all_tasks_done.wait(timeout) também não serve (perde o notify
+        # se a fila já drenou). Polling leve do contador com deadline: retorna
+        # quando a fila drena OU após 10s — shutdown não trava se um worker
+        # estiver preso em rede/ffmpeg.
+        deadline = time.monotonic() + 10
+        while self._queue.unfinished_tasks > 0 and time.monotonic() < deadline:
+            time.sleep(0.05)
         for thread in self._threads:
             thread.join(timeout=5)
 
@@ -111,59 +154,81 @@ class Downloader:
         artist: str | None = None,
         album: str | None = None,
     ) -> DownloadTask:
-        """Enfileira uma música avulsa e registra no histórico (dedupe por yt_id)."""
+        """Enfileira uma música avulsa e registra no histórico (dedupe por yt_id).
+
+        Dedupe em memória sob `_enqueue_lock`: dois POSTs simultâneos do mesmo
+        `yt_id` com a task ainda ativa (pending/running) devolvem a MESMA task —
+        uma única linha no histórico e uma única execução do yt-dlp.
+        """
         self._validate_format(fmt)
         title = title or yt_id
-        # Já baixado (status done): mantém a linha do histórico intacta para o
-        # worker detectar o skip; senão insere/replace com status pending.
-        if not self._history.is_downloaded(yt_id):
-            self._history.add(yt_id, title, artist, album, fmt)
-        task = DownloadTask(
-            task_id=uuid.uuid4().hex[:8],
-            yt_id=yt_id,
-            title=title,
-            format=fmt,
-            artist=artist,
-            album=album,
-        )
-        self._register(task)
-        self._queue.put(task)
+        with self._enqueue_lock:
+            existing = self._find_active(yt_id)
+            if existing is not None:
+                return existing
+            # Já baixado (status done): mantém a linha do histórico intacta para o
+            # worker detectar o skip; senão insere/replace com status pending.
+            if not self._history.is_downloaded(yt_id):
+                self._history.add(yt_id, title, artist, album, fmt)
+            task = DownloadTask(
+                task_id=uuid.uuid4().hex[:8],
+                yt_id=yt_id,
+                title=title,
+                format=fmt,
+                artist=artist,
+                album=album,
+            )
+            self._register(task)
+            self._queue.put(task)
+            self._queued.add(task.task_id)
         self._notify(task.task_id, "pending", 0.0, "queued")
         return task
 
     def enqueue_album(
         self, tracks: list[Track], fmt: str, artist: str, album: str
     ) -> list[DownloadTask]:
-        """Enfileira um álbum inteiro: uma única transação SQLite (batch) no histórico."""
+        """Enfileira um álbum inteiro: uma única transação SQLite (batch) no histórico.
+
+        Sob `_enqueue_lock`: faixas com task ativa (pending/running) são ignoradas
+        (race de dedupe — POSTs simultâneos não criam tasks duplicadas).
+        """
         self._validate_format(fmt)
-        # Uma transação: monta todas as rows e grava em batch.
-        self._history.add_many(
-            [
-                {
-                    "yt_id": t.yt_id,
-                    "title": t.title,
-                    "artist": artist,
-                    "album": album,
-                    "format": fmt,
-                }
-                for t in tracks
-            ]
-        )
-        tasks: list[DownloadTask] = []
-        for track in tracks:
-            task = DownloadTask(
-                task_id=uuid.uuid4().hex[:8],
-                yt_id=track.yt_id,
-                title=track.title,
-                format=fmt,
-                artist=artist,
-                album=album,
-                number=track.number,
+        with self._enqueue_lock:
+            tracks = [t for t in tracks if self._find_active(t.yt_id) is None]
+            if not tracks:
+                return []
+            # Uma transação: monta todas as rows e grava em batch.
+            self._history.add_many(
+                [
+                    {
+                        "yt_id": t.yt_id,
+                        "title": t.title,
+                        "artist": artist,
+                        "album": album,
+                        "format": fmt,
+                        "cover_url": t.cover_url,
+                    }
+                    for t in tracks
+                ]
             )
-            self._register(task)
-            self._queue.put(task)
+            tasks: list[DownloadTask] = []
+            for track in tracks:
+                task = DownloadTask(
+                    task_id=uuid.uuid4().hex[:8],
+                    yt_id=track.yt_id,
+                    title=track.title,
+                    format=fmt,
+                    artist=artist,
+                    album=album,
+                    number=track.number,
+                    cover_url=track.cover_url,
+                )
+                self._register(task)
+                self._queue.put(task)
+                self._queued.add(task.task_id)
+                tasks.append(task)
+        for task in tasks:
             self._notify(task.task_id, "pending", 0.0, "queued")
-            tasks.append(task)
         return tasks
 
     def get(self, task_id: str) -> DownloadTask | None:
@@ -190,7 +255,75 @@ class Downloader:
         try:
             self._listeners.remove(fn)
         except ValueError:
-            pass
+            logger.debug("remove_listener: listener não registrado: %r", fn)
+
+    def cancel(self, task_id: str) -> bool:
+        """Cancela uma task pendente ou em execução; False se inexistente/terminal.
+
+        Pendente: o worker descarta ao pegar da fila. Em execução: o flag
+        `cancel_requested` faz o progress hook do yt-dlp abortar o download.
+        """
+        with self._lock:
+            task = self._tasks.get(task_id)
+            if task is None or task.status in ("done", "failed", "skipped", "cancelled"):
+                return False
+            task.status = "cancelled"
+            task.stage = "cancelled"
+            task.cancel_requested = True
+            self._notify(task.task_id, "cancelled", task.progress, "cancelled")
+            self._history.mark(task.yt_id, "cancelled")
+            return True
+
+    def pause(self, task_ids: list[str] | None = None) -> list[str]:
+        """Pausa tasks pending/running (todas ativas se task_ids None). Preserva o
+        .part (resume nativo do yt-dlp retoma do ponto). `cancel_requested` aborta
+        o download em andamento via progress hook; o estado fica `paused`, distinto
+        de `cancelled`. Tarefas terminais (done/failed/skipped/cancelled/paused)
+        são ignoradas — não entram na lista retornada."""
+        paused: list[str] = []
+        with self._lock:
+            targets = [
+                t
+                for t in self._tasks.values()
+                if t.status in ("pending", "running")
+                and (task_ids is None or t.task_id in task_ids)
+            ]
+            for task in targets:
+                task.status = "paused"
+                task.stage = "paused"
+                task.cancel_requested = True  # aborta download em andamento (progress hook)
+                paused.append(task.task_id)
+                self._history.mark(task.yt_id, "paused")
+        for task_id in paused:
+            self._notify(task_id, "paused", 0.0, "paused")
+        return paused
+
+    def resume(self, task_ids: list[str] | None = None) -> list[str]:
+        """Retoma tasks paused re-enfileirando a MESMA task (sem duplicata; o
+        yt-dlp continua do `.part` preservado pela pausa).
+
+        Só re-enfileira se a task não está mais na fila (`_queued`): uma task
+        pausada ainda pendente na fila não ganha uma 2ª cópia (evita download
+        duplicado/concorrente com `workers > 1`)."""
+        resumed: list[str] = []
+        with self._enqueue_lock, self._lock:
+            targets = [
+                t
+                for t in self._tasks.values()
+                if t.status == "paused" and (task_ids is None or t.task_id in task_ids)
+            ]
+            for task in targets:
+                task.status = "pending"
+                task.stage = "queued"
+                task.cancel_requested = False
+                task.progress = 0.0
+                resumed.append(task.task_id)
+                if task.task_id not in self._queued:
+                    self._queue.put(task)  # MESMA task: snapshot sem duplicata
+                    self._queued.add(task.task_id)
+        for task_id in resumed:
+            self._notify(task_id, "pending", 0.0, "queued")
+        return resumed
 
     def cleanup_partials(self) -> None:
         """Remove arquivos `.part`/`.ytdl` (downloads interrompidos) sob `musicbox_dir`.
@@ -213,12 +346,32 @@ class Downloader:
 
     @staticmethod
     def _validate_format(fmt: str) -> None:
-        if fmt not in _VALID_FORMATS:
+        if fmt not in VALID_FORMATS:
             raise ValueError(f"Formato inválido: {fmt!r} (use 'mp3' ou 'opus')")
 
     def _register(self, task: DownloadTask) -> None:
+        """Registra a task em memória; poda tasks terminais se o teto for excedido.
+
+        O dict preserva a ordem de inserção: iterar == ordem de criação, então a
+        poda remove sempre as tasks terminais mais antigas. Tasks ativas
+        (pending/running) nunca são removidas.
+        """
         with self._lock:
             self._tasks[task.task_id] = task
+            if len(self._tasks) > _TASKS_CAP:
+                for task_id in list(self._tasks):
+                    if len(self._tasks) <= _TASKS_CAP:
+                        break
+                    if self._tasks[task_id].status in _TERMINAL_STATUSES:
+                        del self._tasks[task_id]
+
+    def _find_active(self, yt_id: str) -> DownloadTask | None:
+        """Devolve a task ativa (não terminal) do `yt_id`, ou None."""
+        with self._lock:
+            for task in self._tasks.values():
+                if task.yt_id == yt_id and task.status not in _TERMINAL_STATUSES:
+                    return task
+        return None
 
     def _notify(self, task_id: str, status: str, progress: float, stage: str) -> None:
         """Notifica todos os listeners; um listener quebrado não derruba o worker."""
@@ -239,10 +392,27 @@ class Downloader:
                 if self._stop_flag.is_set():
                     return
                 continue
+            # Task cancelada/pausada antes de o worker pegá-la: descarta sem
+            # processar. A decisão é atômica com a remoção de `_queued` (mesmo
+            # lock do resume): evita re-enfileirar duplicado numa corrida.
+            with self._enqueue_lock:
+                self._queued.discard(task.task_id)
+                if task.status in ("cancelled", "paused"):
+                    self._queue.task_done()
+                    continue
             try:
                 self._process(task)
             except Exception as exc:  # segurança: a thread não deve morrer
-                self._fail(task, f"Erro inesperado: {exc}")
+                if task.status == "cancelled":
+                    # Cancelamento em andamento: exceção genérica do yt-dlp (ou
+                    # _CancelledError engolida pelo executor) NÃO vira "failed".
+                    self._cancel(task)
+                elif task.status == "paused":
+                    pass  # mantém paused (não _fail, não _cancel)
+                elif getattr(task, "cancel_requested", False):
+                    self._cancel(task)
+                else:
+                    self._fail(task, f"Erro inesperado: {exc}")
             finally:
                 self._queue.task_done()
 
@@ -301,10 +471,21 @@ class Downloader:
             if not task.album:
                 task.album = metadata.get("album") or "Singles"
             if not task.title or task.title == yt_id:
-                task.title = (
-                    metadata.get("track") or metadata.get("title") or task.title or yt_id
-                )
-            self._history.update_meta(yt_id, task.title, task.artist, task.album)
+                task.title = metadata.get("track") or metadata.get("title") or task.title or yt_id
+            # Capa: o metadata do YouTube Music é a fonte padrão; o enqueue de
+            # álbum já traz a capa da faixa (não sobrescreve).
+            task.cover_url = task.cover_url or metadata.get("thumbnail")
+            self._history.update_meta(
+                yt_id, task.title, task.artist, task.album, cover_url=task.cover_url
+            )
+
+            # Cancelado/pausado durante a fase de metadados: aborta antes do
+            # executor (paused mantém o estado — o resume re-enfileira).
+            if getattr(task, "cancel_requested", False):
+                if task.status == "paused":
+                    return  # mantém paused
+                self._cancel(task)
+                return
 
             artist_dir = sanitize_filename(task.artist)
             album_dir = sanitize_filename(task.album)
@@ -313,15 +494,33 @@ class Downloader:
             stem = f"{task.number:02d} - {title_stem}" if task.number is not None else title_stem
             dest_dir = dest_root / artist_dir / album_dir
 
-            # Execução do yt-dlp (executor injetável).
+            # Execução do yt-dlp (executor injetável). O cancelamento em execução
+            # derruba o executor via progress hook (_CancelledError).
             temp_dir = dest_root / ".tmp" / task.task_id
             temp_dir.mkdir(parents=True, exist_ok=True)
             try:
                 temp_file = Path(
                     self._executor(yt_id, task.format, temp_dir, dest_dir, stem, metadata)
                 )
+            except _CancelledError:
+                if task.status == "paused":
+                    return  # pausado: mantém paused — o .part fica no temp_dir
+                self._cancel(task)
+                return
             except Exception as exc:
-                self._fail(task, f"Falha no download: {exc}")
+                if task.status == "paused":
+                    return  # mantém paused (não vira failed/cancelled)
+                if getattr(task, "cancel_requested", False):
+                    # Cancelamento durante o download + exceção genérica do
+                    # yt-dlp: trata como cancelamento (não sobrescreve com failed).
+                    self._cancel(task)
+                else:
+                    self._fail(task, f"Falha no download: {exc}")
+                return
+            if task.status == "paused":
+                return  # pausado entre o fim do executor e o move: .part preservado
+            if getattr(task, "cancel_requested", False):
+                self._cancel(task)  # cancelado entre o fim do executor e o move
                 return
             if not temp_file.exists():
                 self._fail(task, "Executor não produziu arquivo de áudio")
@@ -350,6 +549,16 @@ class Downloader:
             task.stage = "moving"
             shutil.move(str(temp_file), str(dest_final))
 
+            # Letra (LRC) ao lado do áudio: busca na LRCLIB e grava como
+            # `dest_final.with_suffix(".lrc")`. Falha/ausência NUNCA bloqueia o
+            # download (o áudio já está no destino) — só loga em debug.
+            try:
+                lrc = fetch_lrc(task.artist or "", task.title or "", task.album)
+                if lrc:
+                    dest_final.with_suffix(".lrc").write_text(lrc, encoding="utf-8")
+            except Exception as exc:
+                logger.debug("Falha ao buscar/gravar letra de %s: %s", yt_id, exc)
+
             # Conclui.
             task.path = str(dest_final)
             task.status = "done"
@@ -358,22 +567,37 @@ class Downloader:
             self._notify(task.task_id, "done", 100.0, "done")
             self._history.mark(yt_id, "done", path=str(dest_final))
         finally:
-            if temp_dir is not None:
+            # Paused preserva o temp_dir: o `.part` do yt-dlp fica lá para o
+            # resume nativo retomar do ponto exato (mesmo outtmpl/URL/formato).
+            if temp_dir is not None and task.status != "paused":
                 shutil.rmtree(temp_dir, ignore_errors=True)
             self._local.task = None
+
+    def _cancel(self, task: DownloadTask) -> None:
+        """Marca a task como `cancelled` (estado terminal, sem arquivo final)."""
+        task.status = "cancelled"
+        task.stage = "cancelled"
+        self._notify(task.task_id, "cancelled", task.progress, "cancelled")
+        self._history.mark(task.yt_id, "cancelled")
+        logger.info("Download cancelado: %s", task.yt_id)
 
     def _fail(self, task: DownloadTask, motivo: str) -> None:
         """Marca a task como `failed` com o motivo; não relança (worker não morre).
 
         O motivo passa por `_strip_ansi` (o yt-dlp imprime erros coloridos que
-        apareceriam crus na UI).
+        apareceriam crus na UI). Task `paused` não é sobrescrita (a pausa pode
+        ocorrer durante uma fase que falha — ex.: metadados — e o estado de
+        pausa deve prevalecer).
         """
+        if task.status == "paused":
+            return  # mantém paused
         motivo = _strip_ansi(motivo)
         task.error = motivo
         task.status = "failed"
         # stage reflete onde falhou (stage corrente da task).
         self._notify(task.task_id, "failed", task.progress, task.stage)
         self._history.mark(task.yt_id, "failed", error=motivo)
+        logger.warning("Download falhou (%s): %s", task.yt_id, motivo)
 
     @staticmethod
     def _suffix_path(path: Path) -> Path:
@@ -386,10 +610,16 @@ class Downloader:
             n += 1
 
     def _progress_hook(self, d: dict) -> None:
-        """Hook de progresso do yt-dlp; usa a task atual da thread (thread-local)."""
+        """Hook de progresso do yt-dlp; usa a task atual da thread (thread-local).
+
+        Cancelamento em execução: o yt-dlp chama o hook durante o download —
+        levantar `_CancelledError` aqui aborta a extração na hora.
+        """
         task = getattr(self._local, "task", None)
         if task is None:
             return
+        if getattr(task, "cancel_requested", False):
+            raise _CancelledError()
         status = d.get("status")
         if status == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
@@ -397,7 +627,13 @@ class Downloader:
             if total:
                 task.progress = min(100.0, downloaded / total * 100)
             task.stage = "extracting"
-            self._notify(task.task_id, "running", task.progress, "extracting")
+            # Rate-limit de notificação: o yt-dlp chama o hook dezenas de vezes
+            # por segundo — no máximo ~5 notificações/s por task (o `progress` da
+            # task é atualizado SEMPRE; só o notify é limitado).
+            now = time.monotonic()
+            if now - getattr(task, "_last_progress_ts", 0.0) >= 0.2:
+                task._last_progress_ts = now
+                self._notify(task.task_id, "running", task.progress, "extracting")
         elif status == "finished":
             task.stage = "converting"  # durante o postprocess (FFmpeg)
             self._notify(task.task_id, "running", task.progress, "converting")
@@ -437,15 +673,14 @@ class Downloader:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": self._settings.socket_timeout,
+            "retries": self._settings.retries,
+            "retry_delay": 3,
             "noplaylist": True,
             # Download anônimo + client android: única combinação que devolve
             # formatos (2026-08-05); sessão logada é flagada pelo YouTube
             # (player response sem streamingData).
             "extractor_args": {"youtube": {"player_client": ["android"]}},
         }
-        # Cookies NÃO são usados no download: a sessão logada é flagada pelo
-        # YouTube (player response sem streamingData → "Requested format is not
-        # available"). O download roda anônimo de propósito.
         with YoutubeDL(opts) as ydl:
             ydl.extract_info(f"https://www.youtube.com/watch?v={yt_id}", download=True)
         # Devolve o primeiro arquivo .mp3/.opus criado em temp_dir (pós-postprocess).

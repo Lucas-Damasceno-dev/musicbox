@@ -32,11 +32,11 @@ class Album:
 
 @dataclass
 class SearchItem:
-    """Item de resultado de busca (artista, álbum ou música avulsa)."""
+    """Item de resultado de busca (artista, álbum, música avulsa ou playlist)."""
 
     id: str
     title: str
-    kind: str  # "artist" | "album" | "song"
+    kind: str  # "artist" | "album" | "song" | "playlist"
     url: str
     thumbnail: str | None = None
     artist: str | None = None
@@ -44,19 +44,20 @@ class SearchItem:
 
 @dataclass
 class SearchResults:
-    """Resultados de busca agrupados por tipo (músicas, artistas e álbuns)."""
+    """Resultados de busca agrupados por tipo (músicas, artistas, álbuns e playlists)."""
 
     artists: list[SearchItem]
     albums: list[SearchItem]
     songs: list[SearchItem] = field(default_factory=list)
+    playlists: list[SearchItem] = field(default_factory=list)
 
 
 @dataclass
 class DownloadTask:
     """Tarefa de download de uma música.
 
-    `status` é um de: pending | running | done | failed | skipped.
-    `stage` é a etapa atual: queued | extracting | converting | moving | done.
+    `status` é um de: pending | running | done | failed | skipped | cancelled.
+    `stage` é a etapa atual: queued | extracting | converting | moving | done | cancelled.
     `progress` varia de 0.0 a 100.0.
     """
 
@@ -72,7 +73,11 @@ class DownloadTask:
     stage: str = "queued"
     path: str | None = None  # caminho do arquivo final quando concluído
     error: str | None = None  # mensagem de erro quando falhou
+    cover_url: str | None = None  # URL da capa (usada pelo player)
+    cancel_requested: bool = False  # flag interno de cancelamento (não serializado)
 
     def to_dict(self) -> dict:
         """Serializa a tarefa para um dict JSON-friendly (usado no WebSocket/REST)."""
-        return asdict(self)
+        data = asdict(self)
+        data.pop("cancel_requested", None)  # flag interno — não expõe na API
+        return data

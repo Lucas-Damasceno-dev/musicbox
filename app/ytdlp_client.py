@@ -15,9 +15,15 @@ Adaptado ao yt-dlp 2026.07.04 (decisão aprovada em 2026-08-04):
 Identificadores em inglês; docstrings/comentários em português.
 """
 
+import json
 import re
-import urllib.error
+import sqlite3
+import threading
+import time
 import urllib.parse
+from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict
 from pathlib import Path
 
 import yt_dlp
@@ -41,17 +47,25 @@ class NetworkError(SearchError):
 _SEARCH_SECTIONS = {
     "albums": "EgWKAQIYAWoKEAoQAxAEEAkQBQ==",
     "artists": "EgWKAQIgAWoKEAoQAxAEEAkQBQ==",
+    "songs": "EgWKAQIIAWoKEAoQAxAEEAkQBQ==",
+    "playlists": "EgeKAQQoADgBagwQAxAJEAQQDhAKEAU==",  # "featured playlists"
 }
 
-# kind canônico do SearchItem por seção (contrato em models.py: "artist" | "album").
+# kind canônico do SearchItem por seção (contrato em models.py).
 _SECTION_KIND = {
     "albums": "album",
     "artists": "artist",
+    "songs": "song",
+    "playlists": "playlist",
 }
 
-# Título de álbum do YT Music vem "mangled": prefixo "Album - " e sufixo "(N Songs)".
+# Ordem canônica de emissão das seções (o SSE entrega nesta ordem).
+_SECTION_ORDER = ("songs", "albums", "artists", "playlists")
+
+# Título de álbum/playlist do YT Music vem "mangled": prefixo "Album - " e
+# sufixo "(N Songs)" (case-insensitive — playlists usam "songs" minúsculo).
 _ALBUM_TITLE_PREFIX = re.compile(r"^\s*Album\s*-\s*")
-_ALBUM_TITLE_SUFFIX = re.compile(r"\s*\(\d+ Songs?\)\s*$")
+_ALBUM_TITLE_SUFFIX = re.compile(r"\s*\(\d+ songs?\)\s*$", re.IGNORECASE)
 
 # Marcadores de falha de rede/timeout presentes em mensagens de exceção do yt-dlp.
 _NETWORK_TOKENS = (
@@ -71,6 +85,30 @@ _NETWORK_TOKENS = (
 # apareciam crus na UI (ex.: "Sign in to confirm you're not a bot").
 _ANSI_ESCAPE = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 
+# TTL do cache de busca (memória e disco), em segundos.
+_CACHE_TTL = 600
+
+# Workers para resolver títulos de entries flat em paralelo (cada título
+# custa 1-2 requisições ao YouTube; em série isso dominava o tempo da busca).
+_RESOLVE_WORKERS = 4
+
+# TTL do cache de TÍTULOS resolvidos por URL (títulos de álbum/canal/playlist
+# raramente mudam e as URLs de browse MPRE/UC/OLAK/PL/VL são estáveis — 7 dias
+# corta resolves repetidos entre buscas parecidas e sessões. Medido: ~9 de 25
+# resolves são duplicatas dentro de uma busca).
+_TITLE_TTL = 604800  # 7 dias (antes 1h = 3600s)
+
+
+def _results_from_json(data: str) -> SearchResults:
+    """Reconstrói um `SearchResults` (com `SearchItem`s) do JSON do cache em disco."""
+    raw = json.loads(data)
+    return SearchResults(
+        artists=[SearchItem(**item) for item in raw.get("artists", [])],
+        albums=[SearchItem(**item) for item in raw.get("albums", [])],
+        songs=[SearchItem(**item) for item in raw.get("songs", [])],
+        playlists=[SearchItem(**item) for item in raw.get("playlists", [])],
+    )
+
 
 def _strip_ansi(text: str) -> str:
     """Remove códigos de escape ANSI de uma string (cores, cursor e limpeza)."""
@@ -78,11 +116,23 @@ def _strip_ansi(text: str) -> str:
 
 
 def _is_network_error(exc: BaseException) -> bool:
-    """True se a exceção (ou sua cadeia de causas/mensagem) indica falha de rede ou timeout."""
+    """True se a exceção (ou sua cadeia de causas/mensagem) indica falha de rede ou timeout.
+
+    Erros HTTP 4xx do YouTube (400/403/404/429...) são PERMANENTES — repetir não
+    resolve e só atrasa a resposta — por isso NÃO contam como falha de rede e
+    não disparam o retry com backoff do app. 5xx continua sendo transitório (rede).
+    """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
         seen.add(id(current))
+        # HTTPError do yt-dlp expõe `.status`; urllib.error.HTTPError expõe `.code`
+        # (e herda de OSError — por isso o check de 4xx vem ANTES do isinstance).
+        status = getattr(current, "status", None)
+        if status is None:
+            status = getattr(current, "code", None)
+        if isinstance(status, int) and 400 <= status < 500:
+            return False
         if isinstance(current, (TimeoutError, ConnectionError, OSError)):
             return True
         message = str(current).lower()
@@ -147,8 +197,7 @@ class YouTubeMusicClient:
         self,
         timeout: int = 25,
         retries: int = 2,
-        cookies_file: Path | str | None = None,
-        cookies_from_browser: str | None = None,
+        cache_path: Path | str | None = None,
     ) -> None:
         self.timeout = timeout
         self.retries = retries
@@ -158,19 +207,79 @@ class YouTubeMusicClient:
             "socket_timeout": timeout,
             "skip_download": True,
             "noplaylist": False,
+            # Retry INTERNO do yt-dlp (default 3) reduzido para 1: num 4xx/rate-limit
+            # do YouTube o extractor repete a requisição até 3× antes de falhar —
+            # multiplica a demora de cada seção de busca. O retry do app (_extract)
+            # só dispara em falha de rede real (backoff) e fica intacto.
+            "extractor_retries": 1,
             "extractor_args": {"youtube": {"player_client": ["android"]}},
         }
-        if cookies_file is not None:
-            self._opts["cookiefile"] = str(cookies_file)
-        elif cookies_from_browser is not None:
-            self._opts["cookiesfrombrowser"] = (cookies_from_browser,)
+        # Cache de busca: memória (sempre) + disco SQLite (se `cache_path`). O
+        # banco sobrevive a restarts — justo onde a busca é cara (~11–20s).
+        self._cache: dict[str, tuple[float, SearchResults | str]] = {}
+        self._cache_lock = threading.Lock()
+        self._cache_db: sqlite3.Connection | None = None
+        if cache_path is not None:
+            db_path = Path(cache_path)
+            try:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+                self._cache_db = sqlite3.connect(str(db_path), check_same_thread=False)
+                self._cache_db.execute(
+                    "CREATE TABLE IF NOT EXISTS search_cache "
+                    "(key TEXT PRIMARY KEY, expires REAL NOT NULL, data TEXT NOT NULL)"
+                )
+                self._cache_db.commit()
+            except sqlite3.Error:
+                self._cache_db = None  # cache em disco é melhor-esforço
+        # Pool de threads para resolver títulos de entries flat em paralelo
+        # (cada título custa 1-2 requisições; compartilhado entre as seções —
+        # o atexit do concurrent.futures encerra os threads no exit do processo).
+        self._resolve_pool = ThreadPoolExecutor(max_workers=_RESOLVE_WORKERS)
+
+    def _cache_get(self, key: str) -> SearchResults | None:
+        """Devolve o resultado em cache (memória ou disco) ou None se expirado."""
+        now = time.time()
+        with self._cache_lock:
+            hit = self._cache.get(key)
+            if hit is not None and hit[0] > now:
+                return hit[1]
+            if self._cache_db is not None:
+                try:
+                    row = self._cache_db.execute(
+                        "SELECT expires, data FROM search_cache WHERE key = ?", (key,)
+                    ).fetchone()
+                except sqlite3.Error:
+                    return None
+                if row is not None and row[0] > now:
+                    result = _results_from_json(row[1])
+                    self._cache[key] = (row[0], result)
+                    return result
+        return None
+
+    def _cache_set(self, key: str, result: SearchResults) -> None:
+        """Grava o resultado no cache (memória + disco, quando disponível)."""
+        expires = time.time() + _CACHE_TTL
+        with self._cache_lock:
+            self._cache[key] = (expires, result)
+            if self._cache_db is not None:
+                try:
+                    self._cache_db.execute(
+                        "INSERT OR REPLACE INTO search_cache (key, expires, data) "
+                        "VALUES (?, ?, ?)",
+                        (key, expires, json.dumps(asdict(result), ensure_ascii=False)),
+                    )
+                    # Pruning leve: expira o que já passou do TTL (evita crescer sem limite).
+                    self._cache_db.execute(
+                        "DELETE FROM search_cache WHERE expires < ?", (time.time(),)
+                    )
+                    self._cache_db.commit()
+                except sqlite3.Error:
+                    pass  # falha no disco não derruba a busca
 
     def _extract(self, url: str, extract_flat: bool = False) -> dict:
-        """Extrai info via yt-dlp com retry em falhas de rede."""
+        """Extrai info via yt-dlp com retry em falhas de rede (backoff progressivo)."""
         opts = dict(self._opts)
         opts["extract_flat"] = extract_flat
-        opts.pop("cookiefile", None)
-        opts.pop("cookiesfrombrowser", None)
 
         last_exc: BaseException | None = None
         for attempt in range(self.retries + 1):
@@ -181,19 +290,69 @@ class YouTubeMusicClient:
                 last_exc = exc
                 if not _is_network_error(exc):
                     break
+                if attempt < self.retries:
+                    # Backoff progressivo entre tentativas (0.5s, 1s, 2s, ... máx 5s).
+                    time.sleep(min(0.5 * 2**attempt, 5.0))
         msg = _strip_ansi(str(last_exc)) if last_exc else "Falha desconhecida"
         if last_exc and _is_network_error(last_exc):
             raise NetworkError(f"Falha de rede ao consultar YouTube Music: {msg}") from last_exc
         raise SearchError(f"Erro ao consultar YouTube Music: {msg}") from last_exc
 
+    def _title_get(self, url: str) -> str | None:
+        """Devolve o título já resolvido para `url` (memória ou disco) ou None."""
+        key = f"title:{url}"
+        now = time.time()
+        with self._cache_lock:
+            hit = self._cache.get(key)
+            if hit is not None and hit[0] > now and isinstance(hit[1], str):
+                return hit[1]
+            if self._cache_db is not None:
+                try:
+                    row = self._cache_db.execute(
+                        "SELECT expires, data FROM search_cache WHERE key = ?", (key,)
+                    ).fetchone()
+                except sqlite3.Error:
+                    return None
+                if row is not None and row[0] > now:
+                    self._cache[key] = (row[0], row[1])
+                    return row[1]
+        return None
+
+    def _title_set(self, url: str, title: str) -> None:
+        """Grava o título resolvido no cache (memória + disco, quando disponível)."""
+        key = f"title:{url}"
+        expires = time.time() + _TITLE_TTL
+        with self._cache_lock:
+            self._cache[key] = (expires, title)
+            if self._cache_db is not None:
+                try:
+                    self._cache_db.execute(
+                        "INSERT OR REPLACE INTO search_cache (key, expires, data) "
+                        "VALUES (?, ?, ?)",
+                        (key, expires, title),
+                    )
+                    self._cache_db.commit()
+                except sqlite3.Error:
+                    pass  # falha no disco não derruba a busca
+
     def _resolve_title(self, url: str) -> str | None:
-        """Resolve o título de uma entrada flat."""
+        """Resolve o título de uma entrada flat (com cache por URL, TTL 7 dias).
+
+        O cache corta as duplicatas: dentro da mesma busca há URLs repetidas
+        (ex.: um canal em "artists" e "playlists") e buscas parecidas reusam
+        os títulos já extraídos — cada título custa 1-2 requisições ao YouTube.
+        """
+        cached = self._title_get(url)
+        if cached is not None:
+            return cached
         current = url
         for _ in range(2):
             info = self._extract(current, extract_flat=True)
             title = info.get("title")
             if title:
-                return str(title)
+                resolved = str(title)
+                self._title_set(url, resolved)
+                return resolved
             redirect = info.get("url")
             if not redirect or redirect == current:
                 return None
@@ -212,10 +371,15 @@ class YouTubeMusicClient:
             + urllib.parse.quote(params)
         )
         info = self._extract(url, extract_flat=True)
+        # Passo 1: coleta itens com título direto das entries e marca os que
+        # precisam de requisição extra (entries flat não trazem title).
         items: list[SearchItem] = []
+        pending: list[tuple[dict, str]] = []
         for entry in info.get("entries") or []:
-            if not isinstance(entry, dict) or len(items) >= max_results:
+            if not isinstance(entry, dict):
                 continue
+            if len(items) + len(pending) >= max_results:
+                break  # seção já tem o máximo — para de varrer o resto
             item_id = entry.get("id")
             if not item_id:
                 continue
@@ -224,39 +388,71 @@ class YouTubeMusicClient:
                 entry_url = f"https://music.youtube.com/watch?v={item_id}"
 
             title = entry.get("title")
-            if not title:
-                title = self._resolve_title(entry_url)
-            if not title:
-                continue
+            if title:
+                items.append(self._build_item(entry, item_id, entry_url, section, str(title)))
+            else:
+                pending.append((entry, entry_url))
 
-            thumbnail = _thumbnail_of(entry)
-            artist = str(entry.get("uploader") or entry.get("channel") or "")
-
-            items.append(
-                SearchItem(
-                    id=str(item_id),
-                    title=str(title),
-                    kind=_SECTION_KIND[section],
-                    url=entry_url,
-                    thumbnail=thumbnail,
-                    artist=artist or None,
-                )
-            )
+        # Passo 2: resolve os títulos faltantes em paralelo (cada um custa 1-2
+        # requisições ao YouTube; em série isso dominava o tempo da busca).
+        if pending:
+            titles = list(self._resolve_pool.map(lambda p: self._resolve_title(p[1]), pending))
+            for (entry, entry_url), title in zip(pending, titles):
+                if len(items) >= max_results:
+                    break
+                if title:
+                    items.append(self._build_item(entry, entry.get("id"), entry_url, section, title))
         return items
 
-    def search(self, query: str, max_results: int = 6) -> SearchResults:
-        """Busca por `query` e retorna músicas, artistas e álbuns com títulos e capas."""
-        import time
+    def _build_item(self, entry: dict, item_id: object, entry_url: str, section: str, title: str) -> SearchItem:
+        """Monta um `SearchItem` a partir da entry flat e do título já resolvido."""
+        thumbnail = _thumbnail_of(entry)
+        artist = str(entry.get("uploader") or entry.get("channel") or "")
+        return SearchItem(
+            id=str(item_id),
+            title=title,
+            kind=_SECTION_KIND[section],
+            url=entry_url,
+            thumbnail=thumbnail,
+            artist=artist or None,
+        )
 
+    def search(
+        self,
+        query: str,
+        max_results: int = 6,
+        on_section: Callable[[str, list[SearchItem]], None] | None = None,
+    ) -> SearchResults:
+        """Busca por `query` e retorna músicas, artistas, álbuns e playlists.
+
+        `on_section(kind, items)` — opcional — é chamado conforme cada seção
+        termina ("songs", "albums", "artists", "playlists"), permitindo que a
+        API /api/search/stream emita as seções incrementalmente (a busca é lenta
+        por causa do rate-limit do YouTube). No cache, todas as seções são
+        emitidas na hora.
+
+        URLs diretas de vídeo (`watch?v=`/`youtu.be`) resolvem como música
+        avulsa; URLs de playlist (`list=PL...`/`VL...`/`OLAK...`) resolvem como
+        um item de playlist (abre a lista de faixas). Resultados ficam em cache
+        (memória + disco, TTL 600s).
+        """
         query_clean = query.strip()
         cache_key = f"{query_clean.lower()}:{max_results}"
 
-        if hasattr(self, "_cache") and cache_key in self._cache:
-            cached_time, cached_res = self._cache[cache_key]
-            if time.time() - cached_time < 600:
-                return cached_res
+        cached = self._cache_get(cache_key)
+        if cached is not None:
+            if on_section is not None:
+                for kind, items in (
+                    ("songs", cached.songs),
+                    ("albums", cached.albums),
+                    ("artists", cached.artists),
+                    ("playlists", cached.playlists),
+                ):
+                    on_section(kind, items)
+            return cached
 
-        yt_id_match = re.search(r"(?:v=|\/|be\/)([a-zA-Z0-9_-]{11})", query_clean)
+        # 1) URL de música (watch/youtu.be) — precedência sobre playlist.
+        yt_id_match = re.search(r"(?:[?&]v=|be/)([a-zA-Z0-9_-]{11})", query_clean)
         if yt_id_match and ("youtube.com" in query_clean or "youtu.be" in query_clean):
             yt_id = yt_id_match.group(1)
             try:
@@ -270,23 +466,56 @@ class YouTubeMusicClient:
                     artist=", ".join(meta.get("artists") or []) if meta.get("artists") else None,
                 )
                 res = SearchResults(artists=[], albums=[], songs=[item])
-                if not hasattr(self, "_cache"):
-                    self._cache = {}
-                self._cache[cache_key] = (time.time(), res)
+                if on_section is not None:
+                    on_section("songs", [item])
+                self._cache_set(cache_key, res)
                 return res
             except Exception:
-                pass
+                pass  # cai para a busca por seções
 
-        songs = self._search_section("songs", query_clean, max_results)
-        albums = self._search_section("albums", query_clean, max_results)
-        artists = self._search_section("artists", query_clean, max_results)
-        if not songs and not albums and not artists:
+        # 2) URL de playlist direta: resolve as faixas e devolve um item.
+        playlist_match = re.search(r"[?&]list=([A-Za-z0-9_-]{13,})", query_clean)
+        if playlist_match and ("youtube.com" in query_clean or "youtu.be" in query_clean):
+            try:
+                album = self.album_tracks(playlist_match.group(1))
+                item = SearchItem(
+                    id=playlist_match.group(1),
+                    title=album.title,
+                    kind="playlist",
+                    url=f"https://music.youtube.com/playlist?list={playlist_match.group(1)}",
+                    thumbnail=album.cover_url,
+                    artist=album.artist,
+                )
+                res = SearchResults(artists=[], albums=[], songs=[], playlists=[item])
+                if on_section is not None:
+                    on_section("playlists", [item])
+                self._cache_set(cache_key, res)
+                return res
+            except Exception:
+                pass  # cai para a busca por seções
+
+        # Seções em série, "songs" primeiro. Medido com o YouTube real: as 4
+        # seções em paralelo derrubaram o tempo da PRIMEIRA resposta (songs
+        # passou de ~35s para ~184s) porque ~20 extrações simultâneas acionam
+        # throttling do YouTube; em série, songs chega em ~35s e o SSE já
+        # renderiza os primeiros resultados. Dentro de cada seção, os títulos
+        # flat são resolvidos em paralelo (_resolve_pool) e o cache por URL
+        # (_title_get/_title_set) corta as duplicatas entre seções/buscas.
+        results_by_kind: dict[str, list[SearchItem]] = {}
+        for kind in _SECTION_ORDER:
+            items = self._search_section(kind, query_clean, max_results)
+            results_by_kind[kind] = items
+            if on_section is not None:
+                on_section(kind, items)
+        songs = results_by_kind["songs"]
+        albums = results_by_kind["albums"]
+        artists = results_by_kind["artists"]
+        playlists = results_by_kind["playlists"]
+        if not songs and not albums and not artists and not playlists:
             raise NotFoundError(f"Nenhum resultado encontrado para a busca \"{query_clean}\".")
 
-        res = SearchResults(artists=artists, albums=albums, songs=songs)
-        if not hasattr(self, "_cache"):
-            self._cache = {}
-        self._cache[cache_key] = (time.time(), res)
+        res = SearchResults(artists=artists, albums=albums, songs=songs, playlists=playlists)
+        self._cache_set(cache_key, res)
         return res
 
     def artist_albums(self, artist_name: str) -> list[SearchItem]:
@@ -301,7 +530,8 @@ class YouTubeMusicClient:
         `year` = None (indisponível). Browse MPRE pode devolver um redirect (stub) para a
         playlist OLAK — o redirect é seguido. Sem faixas → `NotFoundError`.
         """
-        if browse_id.startswith("OLAK"):
+        # OLAK = álbum, PL/VL = playlists do usuário, RDAM/RDCLAK = mixes.
+        if browse_id.startswith(("OLAK", "PL", "VL", "RDAM", "RDCLAK")):
             url = f"https://music.youtube.com/playlist?list={browse_id}"
         else:
             url = f"https://music.youtube.com/browse/{browse_id}"
