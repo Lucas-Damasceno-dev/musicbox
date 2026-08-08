@@ -2,27 +2,76 @@
 
 MusicBox é um **Player de Música e Downloader Pessoal (Self-Hosted)** que busca, reproduz e baixa músicas e álbuns do YouTube Music para ouvir offline no celular e no computador.
 
-## Recurso e Funcionalidades
+![Busca no MusicBox — tema claro "Polido"](docs/screenshots/musicbox-busca.png)
 
-- **Full Music Player**: Tela dedicada de "now playing" (capa em disco de vinil girando, seek, volume, fila, salvar offline e salvar em playlist) + mini-player flutuante com capa — clicar no mini-player abre a tela cheia. Toca direto da biblioteca/histórico; suporta Media Session na tela de bloqueio.
-- **Biblioteca Navegável**: aba própria com artistas → álbuns → faixas (só o que está baixado), com reprodução por álbum.
-- **Playlists do Usuário**: crie playlists, adicione a faixa tocando no player, toque e exporte `.m3u` por playlist (persistência SQLite).
-- **Busca Incremental (SSE)**: a busca (~11–20s) agora entrega as seções **conforme resolvem** — a UI mostra músicas/álbuns progressivamente com skeleton, sem esperar tudo.
-- **Badge de Downloads Ativos**: contador ao vivo no botão Downloads da navegação (WebSocket sempre conectado).
-- **Notificações de Download**: notificação nativa quando um download termina ou falha (Notification API, permissão pedida no primeiro download).
-- **Offline no Navegador**: Service Worker cacheia os áudios tocados/baixados — reproduza sem rede (botão "Salvar offline" na tela do player).
-- **PWA (Progressive Web App)**: Pode ser instalado na tela inicial do celular (Android/iOS) rodando como app nativo em tela cheia (ícones PNG reais 192/512).
-- **Cache de Busca Instantâneo (LRU + disco)**: Buscas repetidas respondem em ~0.01s e o cache sobrevive a restarts (SQLite).
-- **Capas em Alta Definição (HD Cover Art)**: Up-scaling automático de thumbnails para alta resolução (600x600 px).
-- **Busca por URL Direta**: Cole qualquer link do YouTube / YouTube Music — inclusive **URLs de playlist** (`list=PL...`) — diretamente na busca.
-- **Playlists do YouTube Music**: aba própria na busca + download de playlists inteiras (faixas numeradas por posição).
-- **Edição de Metadados / Tags ID3**: Edite títulos, artistas e álbuns diretamente na interface e nas tags dos arquivos de mídia.
-- **Exportação de Playlists `.M3U`**: Baixe um arquivo `.m3u` para carregar suas músicas em players externos.
-- **Recuperação de Falhas**: Botão para re-enfileirar todos os downloads que falharam em 1 clique.
-- **Cancelamento de Downloads**: Cancele tarefas na fila ou em execução (o yt-dlp é abortado na hora).
-- **Remoção da Biblioteca**: Remova faixas do histórico apagando também o arquivo no servidor.
-- **Token de Acesso Opcional** (`MUSICBOX_TOKEN`): proteja a API na rede local — sem token, qualquer dispositivo da Wi-Fi acessa a biblioteca.
-- **Transferência Automática para o Celular**: O download é disparado automaticamente para o dispositivo assim que a conversão conclui.
+## Funcionalidades
+
+### Temas — claro "Polido" e escuro "Analog"
+
+- O tema claro **"Polido"** (creme/terracota/âmbar, serifada Georgia) é o **padrão na primeira visita**; o toggle no header (☀/🌙) alterna para o tema escuro **"Analog"** (marrom quente/terracota).
+- A preferência fica em `localStorage` (`musicbox.theme`) e vale para as próximas sessões.
+
+### Busca
+
+- **Status dinâmico por seção**: a UI mostra "Músicas encontradas — buscando álbuns, artistas e playlists…" e entrega cada seção conforme resolve (SSE) — sem esperar a busca inteira.
+- **Otimizada com cache**: títulos resolvidos por URL ficam em cache por **7 dias**; resultados de busca por **10 minutos** (memória + disco em SQLite).
+- **4 workers** resolvem títulos em paralelo.
+- A **1ª busca de uma query nova leva ~1–2 min** (rate-limit do YouTube); buscas repetidas são instantâneas.
+
+### Download
+
+- Formato padrão **Opus 160** (antes MP3 320) — config `DEFAULT_FORMAT=opus`.
+- Botões com **3 estados**: idle → spinner + % → "Baixado".
+- CTA **"Baixar Álbum · N faixas"** em álbuns e playlists.
+- **Download anônimo por design**: sem cookies — sessão logada é flagada pelo YouTube (seção dedicada abaixo).
+
+### Downloads resilientes
+
+- Falha de rede → **até 3 tentativas automáticas** com backoff **5s → 30s → 2min**.
+- **Fila persistida em SQLite**: restart do servidor retoma os downloads **no ponto exato** (arquivos `.part`).
+- Banner **"Você está offline"** no frontend + **auto-retry** ao reconectar; badge **"Reconectando · tentativa N/3"**.
+- Pausar/retomar downloads **em lote** ou por tarefa.
+
+### Player rico
+
+- Vinil girando a **33⅓ rpm** com agulha (tonearm) que levanta/abaixa ao tocar/pausar.
+- **Bottom-sheet**: arrastar para baixo minimiza o player **sem parar a música**.
+- **Media Session**: notificação rica com seekbar na tela de bloqueio.
+- **Crossfade ajustável 1–12s** (slider no player, `localStorage` `musicbox.crossfade`); **0 = gapless** com pré-load da próxima faixa.
+
+### Biblioteca
+
+- Segmentos **Histórico | Artistas | Álbuns | Local** + filtros de formato (**Todos/MP3/Opus**).
+- Agrupamento por artista/álbum com **contagem de faixas**.
+- **Swipe**: esquerda adiciona à fila, direita baixa.
+
+### Biblioteca local (arquivos do dispositivo)
+
+- Selecione uma pasta do dispositivo (`showDirectoryPicker` no desktop; `webkitdirectory` no Android/web).
+- Os arquivos **não saem do dispositivo**; metadados ficam parcialmente persistidos via **IndexedDB**.
+- Em sessão nova, é preciso re-selecionar a pasta para tocar (limitação documentada abaixo).
+
+### Letras sincronizadas (LRC)
+
+- Baixadas automaticamente da **LRCLIB** junto com o download (arquivo `.lrc` ao lado do áudio).
+- Aba **"Letras"** no player com **karaokê** (linha ativa + auto-scroll) — funciona offline.
+
+### Armazenamento
+
+- Aba Downloads com **3 visões**: disco do servidor, tamanho da biblioteca e quota do dispositivo/cache.
+- Botões **"Limpar órfãos (.part)"** e **"Limpar cache"**; alerta de **disco baixo**.
+
+### Acessibilidade e robustez
+
+- Cards **clicáveis por teclado** (Enter/Espaço) e contraste **AA**.
+- **Fontes self-hosted** (offline-first); service worker com **eviction de cache de áudio** (máx ~500 MB ou 80% da quota).
+
+### Playlists e integrações
+
+- **Playlists do usuário**: crie, adicione a faixa tocando no player e exporte `.m3u` (persistência SQLite).
+- **Busca por URL direta** (YouTube / YouTube Music — inclusive `list=PL...`) e **playlists do YouTube Music** (faixas numeradas por posição).
+- **Edição de metadados / tags ID3**: edite título, artista e álbum na interface e nas tags do arquivo.
+- **Notificações de download**, **capas em HD**, cancelamento de downloads, re-enfileiramento de falhas em 1 clique e **token de acesso opcional** (`MUSICBOX_TOKEN`).
 
 ## Stack
 
@@ -30,8 +79,9 @@ MusicBox é um **Player de Música e Downloader Pessoal (Self-Hosted)** que busc
 - **FastAPI** — servidor HTTP, rotas REST e WebSocket
 - **yt-dlp** — extração de metadados e download
 - **mutagen** — incorporação e edição de tags de áudio (ID3/Ogg)
-- **SQLite** — histórico de downloads e biblioteca (via stdlib `sqlite3`, zero-config)
-- **Frontend Vanilla & PWA** (HTML5, ServiceWorker, Google Fonts, Audio Engine) em `app/static/`
+- **SQLite** — histórico, playlists, fila de downloads e caches (via stdlib `sqlite3`, zero-config)
+- **LRCLIB** — letras sincronizadas (LRC) baixadas automaticamente
+- **Frontend Vanilla & PWA** (HTML5, ServiceWorker, Media Session, temas claro/escuro, Audio Engine) em `app/static/`
 - **Sem Docker** — o backend roda nativo
 
 ## Requisitos
@@ -70,7 +120,7 @@ O `make dev` cria o venv se ausente, instala as dependências e avisa se o `ffmp
 make test
 ```
 
-Roda a suíte pytest (115 testes, com yt-dlp mockado — sem rede).
+Roda a suíte pytest (163 testes, com yt-dlp mockado — sem rede).
 
 ## Configuração
 
@@ -84,11 +134,12 @@ cp .env.example .env
 |---|---|---|
 | `PORT` | `8080` | Porta do servidor HTTP (FastAPI/Uvicorn) |
 | `MUSICBOX_DIR` | `~/Music/musicbox/` | Diretório onde as músicas baixadas são salvas |
-| `DEFAULT_FORMAT` | `opus` | Formato padrão de download: `mp3` ou `opus` |
+| `DEFAULT_FORMAT` | `opus` | Formato padrão de download: `mp3` ou `opus` (o padrão mudou de MP3 320 para Opus 160) |
 | `WORKERS` | `2` | Número de downloads simultâneos |
 | `SOCKET_TIMEOUT` | `30` | Timeout de socket (segundos) nas requisições de rede |
 | `RETRIES` | `2` | Número de tentativas de download antes de considerar falha |
 | `MUSICBOX_TOKEN` | (não definido) | Token de acesso compartilhado exigido nas rotas `/api/*` (header `X-MusicBox-Token` ou query `?token=`). Sem ele, a API fica aberta na rede local |
+| `ALLOWED_ORIGINS` | (vazio) | Allowlist (separada por vírgula) de origins liberadas no guard de CSRF/drive-by dos métodos de escrita (POST/PUT/PATCH/DELETE). Vazio = só o host da própria request |
 
 Precedência: **variável de ambiente > `.env` > padrão**. Em `MUSICBOX_DIR`, `~` e `$VAR` são expandidos.
 
@@ -106,37 +157,50 @@ Com a abordagem anônima + client `android`, o áudio vem do formato **18 (mp4, 
 
 Adaptado ao yt-dlp **2026.07.04**: o extrator atual não tem mais `ytmsearch:` nem fornece `track_number`/ano para álbuns. O cliente (`app/ytdlp_client.py`) contorna isso:
 
-- **Busca** via URL `https://music.youtube.com/search?q=...` com `extract_flat=True`, separando as seções de músicas, álbuns, artistas e playlists (parâmetro `sp`). Resultados ficam em **cache LRU em memória + SQLite em disco** (`search_cache.db` em `MUSICBOX_DIR`), TTL 600s.
+- **Busca** via URL `https://music.youtube.com/search?q=...` com `extract_flat=True`, separando as seções de músicas, álbuns, artistas e playlists (parâmetro `sp`). Resultados ficam em **cache LRU em memória + SQLite em disco** (`search_cache.db` em `MUSICBOX_DIR`), TTL 600s (10 min); títulos resolvidos por URL têm **cache próprio de 7 dias**; **4 workers** resolvem títulos em paralelo.
+- **Latência de busca**: a 1ª busca de uma query nova leva **~1–2 min** por causa do rate-limit do YouTube (resolução em paralelo + cache evitam re-resolves); buscas repetidas respondem instantaneamente.
 - **URLs diretas**: `watch?v=`/`youtu.be` viram música avulsa; `list=PL...`/`VL...`/`OLAK...` viram um item de playlist que abre a lista de faixas.
 - **Álbum/Playlist**: o id `MPRE...` (browse) resolve por redirect para a playlist `OLAK...`; playlists `PL`/`VL`/mixes resolvem direto pela URL de playlist; as faixas são numeradas por **posição** (1..N) e não há ano na UI (`year=None`).
 - **Artista**: não há página de álbuns de artista no yt-dlp — a tela de artista usa a **busca filtrada a álbuns**.
-- **Latência de busca** de ~11–20s: a resolução de títulos é **sequencial** por causa do rate-limit do YouTube (paralelismo se mostrou mais lento) — comportamento deliberado.
-- **Download**: yt-dlp `-x` com `FFmpegExtractAudio` (mp3/opus) + `EmbedThumbnail`; o arquivo final fica em `MUSICBOX_DIR/<artista>/<álbum>/<NN> - <título>.<ext>` (NN = posição da faixa, zero-padded).
+- **Download**: yt-dlp `-x` com `FFmpegExtractAudio` (mp3/opus) + `EmbedThumbnail`; o arquivo final fica em `MUSICBOX_DIR/<artista>/<álbum>/<NN> - <título>.<ext>` (NN = posição da faixa, zero-padded). A letra (`.lrc`) é buscada na LRCLIB e gravada ao lado do áudio; falha de rede dispara retry automático (3 tentativas, backoff 5s/30s/2min) e a fila é persistida no SQLite.
 
 ## API
 
 | Método | Caminho | Descrição | Erros |
 |---|---|---|---|
 | `GET` | `/` | Serve o `index.html` do frontend (200) | 503 (fallback quando `index.html` está ausente) |
+| `GET` | `/api/config` | Config leve para a UI (`has_ffmpeg`, `local_ip`, `server_url`, `auth_required`) — pública de propósito | — |
 | `GET` | `/api/search?q=&limit=` | Busca músicas, artistas, álbuns e playlists no YouTube Music (`limit`: 1–40 itens por seção, padrão 10) | 404, 422, 502, 503 |
 | `GET` | `/api/search/stream?q=` | SSE da busca: eventos `section`/`done`/`error` conforme cada seção resolve | 422 |
 | `GET` | `/api/browse` | Biblioteca navegável: artistas → álbuns → faixas (baixadas) | — |
-| `GET/POST` | `/api/playlists` | Lista / cria playlists do usuário (`POST` com `{name}` → 201) | 422 |
+| `GET` | `/api/playlists` | Lista playlists do usuário (com contagem de faixas) | — |
+| `POST` | `/api/playlists` | Cria playlist (`{name}`) → 201 | 422 |
 | `DELETE` | `/api/playlists/{id}` | Apaga playlist (faixas em cascata) | 404 |
 | `GET` | `/api/playlists/{id}` | Playlist com faixas (metadados do histórico) | 404 |
 | `POST` | `/api/playlists/{id}/tracks` | Adiciona faixa (`{yt_id}`), dedupe por yt_id → 201 | 404, 422 |
 | `DELETE` | `/api/playlists/{id}/tracks/{yt_id}` | Remove faixa da playlist | 404 |
-| `GET` | `/api/playlists/{id}/export.m3u` | Exporta a playlist como `.m3u` (só faixas baixadas) | 404 |
+| `GET` | `/api/playlists/{id}/export.m3u` | Exporta a playlist como `.m3u` (URLs do `/api/library`) | 404 |
 | `GET` | `/api/artists/{artist_name}/albums` | Álbuns de um artista (pelo nome) | 404, 502, 503 |
 | `GET` | `/api/albums/{browse_id}/tracks` | Faixas de um álbum pelo browse_id | 404, 502, 503 |
 | `POST` | `/api/downloads` | Enfileira um download (`yt_id`, `album_id` ou `playlist_id`, `formato: mp3\|opus`) → 202 | 404, 422, 502, 503 |
 | `GET` | `/api/downloads` | Snapshot das tasks em memória (status/progresso/stage) | — |
 | `DELETE` | `/api/downloads/{task_id}` | Cancela uma tarefa (pendente ou em execução) | 404 |
+| `POST` | `/api/downloads/pause` | Pausa downloads em lote (`task_ids` opcional; ausente = todos os ativos) | — |
+| `POST` | `/api/downloads/resume` | Retoma downloads pausados em lote | — |
+| `POST` | `/api/downloads/{task_id}/pause` | Pausa uma tarefa ativa | 404, 409 |
+| `POST` | `/api/downloads/{task_id}/resume` | Retoma uma tarefa pausada | 404, 409 |
+| `POST` | `/api/downloads/retry-failed` | Re-enfileira todas as faixas `failed` do histórico | — |
+| `GET` | `/api/storage` | Estatísticas de armazenamento (disco + biblioteca + `.part`) | — |
+| `POST` | `/api/storage/cleanup` | Remove `.part`/`.ytdl` órfãos; reporta `removed`/`freed_bytes` | — |
 | `GET` | `/api/history` | Histórico persistido de downloads | — |
-| `DELETE` | `/api/history/{yt_id}` | Remove o registro E o arquivo de mídia do servidor | 404 |
+| `POST` | `/api/history/{yt_id}/metadata` | Atualiza título/artista/álbum no banco E nas tags do arquivo | 404, 422 |
+| `DELETE` | `/api/history/{yt_id}` | Remove o registro, o arquivo de mídia e a letra `.lrc` irmã do servidor | 404 |
 | `GET` | `/api/library/{rel_path:path}` | Serve um arquivo baixado (com proteção contra path traversal) | 404 |
+| `GET` | `/api/library/{yt_id}/lyrics` | Serve a letra `.lrc` baixada junto com a faixa (texto) | 404 |
 
 > **Autenticação:** com `MUSICBOX_TOKEN` definido, TODAS as rotas `/api/*` (exceto `/api/config`) exigem o token via header `X-MusicBox-Token` ou query `?token=` (necessário para `<audio>`/downloads). O `/ws` exige o token na query.
+
+> **Origins:** métodos de escrita (POST/PUT/PATCH/DELETE) passam por um guard de origin — a request precisa ter o mesmo host ou estar na allowlist `ALLOWED_ORIGINS` (proteção contra CSRF/drive-by; requisições sem header `Origin`, como curl/scripts, seguem livres — quem precisar de proteção de verdade usa o token).
 
 ## WebSocket `/ws`
 
@@ -155,9 +219,11 @@ app/
   config.py         # Settings + parser de .env (env > .env > padrão)
   models.py         # Track, Album, SearchItem, SearchResults, DownloadTask
   ytdlp_client.py   # cliente do YouTube Music via yt-dlp (busca/álbum/metadados)
-  downloader.py     # fila FIFO + thread pool, progresso, sanitização
-  history.py        # histórico em SQLite (dedupe por yt_id)
-  static/           # frontend vanilla (servido pelo FastAPI)
+  downloader.py     # fila FIFO + thread pool, progresso, retry de rede, fila persistida
+  history.py        # histórico em SQLite (dedupe por yt_id, metadados/tags)
+  playlists.py      # playlists do usuário em SQLite
+  lyrics.py         # busca de letras sincronizadas (LRC) na LRCLIB
+  static/           # frontend vanilla (temas, player, biblioteca, PWA)
 tests/              # suíte pytest (yt-dlp mockado, sem rede)
 ```
 
@@ -167,14 +233,18 @@ tests/              # suíte pytest (yt-dlp mockado, sem rede)
 make test
 ```
 
-115 testes, distribuídos por módulo: `config` 12 · `downloader` 23 · `history` 13 · `main` 36 · `playlists` 9 · `ytdlp_client` 22.
+163 testes, distribuídos por módulo: `config` 10 · `downloader` 32 · `history` 14 · `lyrics` 7 · `main` 66 · `playlists` 10 · `ytdlp_client` 24.
 
-## Limitações e convenções
+## Limitações
 
-- A busca pode demorar (~11–20s) — é o comportamento esperado, dado o rate-limit do YouTube.
+- **Widget de tela inicial não suportado**: o PWA não tem API de widget nativa — no Android seria necessário um app nativo/TWA, e o iPhone não suporta widgets de PWA.
+- **Biblioteca local exige re-seleção da pasta** em sessão nova (o app não lê tags ID3 dos arquivos do dispositivo — só os metadados persistidos no IndexedDB).
+- **A 1ª busca de uma query nova demora ~1–2 min** (rate-limit do YouTube — ver "Busca" acima); buscas repetidas respondem instantaneamente.
 - **ffmpeg é obrigatório para TODOS os downloads — mp3 E opus**: a conversão passa por
   `FFmpegExtractAudio` nos dois formatos (opus não é "nativo"). Sem ffmpeg no servidor os
   downloads falham; a UI exibe um banner persistente e desabilita os botões de download.
-- Não há CORS habilitado (o frontend é servido pelo próprio FastAPI, mesmo domínio).
+- Não há CORS (o frontend é servido pelo próprio FastAPI, mesmo domínio); métodos de escrita passam por um guard de origin com allowlist `ALLOWED_ORIGINS`.
+
+## Convenções
 - Comentários, docstrings e este README estão em **português**; identificadores de código em **inglês**.
 - Docker é usado para **infraestrutura apenas** neste portfolio — o MusicBox roda 100% nativo.
