@@ -205,6 +205,7 @@ def test_extract_remove_ansi_do_network_error(fake_ydl):
 
 # ------------------------------------------------- busca por seções (SSE)
 
+
 def test_search_on_section_emite_cada_secao(fake_ydl):
     # A busca por streaming chama on_section(kind, items) conforme cada seção
     # resolve — músicas, álbuns, artistas e playlists (vazias viram []).
@@ -214,7 +215,9 @@ def test_search_on_section_emite_cada_secao(fake_ydl):
     }
     fake_ydl["infos"][_section_url("queen", "albums")] = {
         "title": "R",
-        "entries": [{"id": "MPRE1", "url": "https://music.youtube.com/browse/MPRE1", "title": "Album X"}],
+        "entries": [
+            {"id": "MPRE1", "url": "https://music.youtube.com/browse/MPRE1", "title": "Album X"}
+        ],
     }
     fake_ydl["default_info"] = {"title": "R", "entries": []}
 
@@ -231,7 +234,9 @@ def test_search_on_section_cache_hit_emite_tudo(fake_ydl):
     # Cache quente: on_section entrega todas as seções na hora (sem reextrair).
     fake_ydl["infos"][_section_url("queen", "albums")] = {
         "title": "R",
-        "entries": [{"id": "MPRE1", "url": "https://music.youtube.com/browse/MPRE1", "title": "Album X"}],
+        "entries": [
+            {"id": "MPRE1", "url": "https://music.youtube.com/browse/MPRE1", "title": "Album X"}
+        ],
     }
     fake_ydl["default_info"] = {"title": "R", "entries": []}
     client = YouTubeMusicClient()
@@ -245,6 +250,7 @@ def test_search_on_section_cache_hit_emite_tudo(fake_ydl):
 
 
 # ---------------------------------------------------------------- playlists
+
 
 def test_search_url_playlist_vira_item_playlist(fake_ydl):
     playlist_url = "https://music.youtube.com/playlist?list=PLabc123def456ghi"
@@ -289,6 +295,7 @@ def test_album_tracks_playlist_usa_url_playlist(fake_ydl):
 
 # ------------------------------------------------------------- cache em disco
 
+
 def test_cache_disco_persiste_entre_instancias(tmp_path, fake_ydl):
     fake_ydl["infos"][_section_url("queen", "albums")] = {
         "title": "R",
@@ -318,6 +325,7 @@ def test_cache_disco_persiste_entre_instancias(tmp_path, fake_ydl):
 
 
 # ------------------------------------- limites (_search_section / _resolve_title)
+
 
 def test_search_section_respeita_max_results(fake_ydl):
     # Entries além de `max_results` NÃO são expandidos (título flat custa rede).

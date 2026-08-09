@@ -20,6 +20,7 @@ def _make_app(settings, history, stub_client, fake_executor, store=None):
 
 # ------------------------------------------------------------------ store
 
+
 def test_store_crud(tmp_path):
     store = PlaylistStore(tmp_path / "playlists.db")
     pl = store.create("Favoritas")
@@ -54,6 +55,7 @@ def test_store_delete_cascade_faixas(tmp_path):
 
 # ------------------------------------------------------------------ rotas
 
+
 def test_playlists_rotas_crud(settings, history, stub_client, fake_executor):
     with TestClient(_make_app(settings, history, stub_client, fake_executor)) as client:
         assert client.get("/api/playlists").json() == []
@@ -64,8 +66,10 @@ def test_playlists_rotas_crud(settings, history, stub_client, fake_executor):
         # nome vazio → 422
         assert client.post("/api/playlists", json={"name": "   "}).status_code == 422
         # adiciona faixa (dedupe)
-        assert client.post(f"/api/playlists/{pl['id']}/tracks", json={"yt_id": "yt1"}).status_code == 201
-        assert client.post(f"/api/playlists/{pl['id']}/tracks", json={"yt_id": "yt1"}).status_code == 201
+        resp = client.post(f"/api/playlists/{pl['id']}/tracks", json={"yt_id": "yt1"})
+        assert resp.status_code == 201
+        resp = client.post(f"/api/playlists/{pl['id']}/tracks", json={"yt_id": "yt1"})
+        assert resp.status_code == 201
         # playlist com faixas (join com o histórico — yt1 não baixada → sem path)
         detail = client.get(f"/api/playlists/{pl['id']}").json()
         assert detail["track_count"] == 1

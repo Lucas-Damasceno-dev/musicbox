@@ -77,7 +77,8 @@ class PlaylistStore:
         try:
             rows = conn.execute(
                 "SELECT p.id, p.name, p.created_at, "
-                "(SELECT COUNT(*) FROM playlist_tracks t WHERE t.playlist_id = p.id) AS track_count "
+                "(SELECT COUNT(*) FROM playlist_tracks t "
+                "WHERE t.playlist_id = p.id) AS track_count "
                 "FROM playlists p ORDER BY p.id DESC"
             ).fetchall()
             return [dict(row) for row in rows]
@@ -91,7 +92,8 @@ class PlaylistStore:
         try:
             row = conn.execute(
                 "SELECT p.id, p.name, p.created_at, "
-                "(SELECT COUNT(*) FROM playlist_tracks t WHERE t.playlist_id = p.id) AS track_count "
+                "(SELECT COUNT(*) FROM playlist_tracks t "
+                "WHERE t.playlist_id = p.id) AS track_count "
                 "FROM playlists p WHERE p.id = ?",
                 (playlist_id,),
             ).fetchone()

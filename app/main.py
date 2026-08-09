@@ -42,7 +42,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, StringConstraints
 
 from .config import Settings, load_settings
-from .downloader import VALID_FORMATS, Downloader, _PARTIAL_SUFFIXES
+from .downloader import _PARTIAL_SUFFIXES, VALID_FORMATS, Downloader
 from .history import History
 from .models import SearchItem, SearchResults
 from .playlists import PlaylistStore
@@ -68,7 +68,8 @@ if not logging.getLogger().handlers:
 
 
 class DownloadRequest(BaseModel):
-    """Corpo do POST /api/downloads: música (`yt_id`), álbum (`album_id`) ou playlist (`playlist_id`).
+    """Corpo do POST /api/downloads: música (`yt_id`), álbum (`album_id`)
+    ou playlist (`playlist_id`).
 
     `formato` ausente → usa `settings.default_format` (config não fica morta).
     Strings vazias/em-branco contam como ausentes na regra "exatamente um de".
@@ -470,12 +471,18 @@ def create_app(
                         continue
                     if msg[0] == "section":
                         _, kind, items = msg
-                        yield f"event: section\ndata: {json.dumps({kind: items}, ensure_ascii=False)}\n\n"
+                        yield (
+                            "event: section\ndata: "
+                            f"{json.dumps({kind: items}, ensure_ascii=False)}\n\n"
+                        )
                     elif msg[0] == "done":
                         yield "event: done\ndata: {}\n\n"
                         break
                     else:
-                        yield f"event: error\ndata: {json.dumps({'detail': msg[1]}, ensure_ascii=False)}\n\n"
+                        yield (
+                            "event: error\ndata: "
+                            f"{json.dumps({'detail': msg[1]}, ensure_ascii=False)}\n\n"
+                        )
                         break
             finally:
                 # Cliente desconectou ou stream terminou → cancela a busca e
@@ -664,7 +671,8 @@ def create_app(
 
     @fastapi_app.delete("/api/history/{yt_id}", dependencies=[Depends(require_auth)])
     def delete_history(yt_id: str) -> dict:
-        """Remove o registro do histórico E o arquivo de mídia (se existir e dentro de musicbox_dir)."""
+        """Remove o registro do histórico E o arquivo de mídia (se existir e
+        dentro de musicbox_dir)."""
         record = history.get(yt_id)
         if not record:
             raise HTTPException(status_code=404, detail="Registro não encontrado")

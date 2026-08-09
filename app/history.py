@@ -145,7 +145,8 @@ class History:
                 conn.executemany(
                     "INSERT OR REPLACE INTO downloads "
                     "(yt_id, title, artist, album, format, date, status, path, cover_url) "
-                    "VALUES (:yt_id, :title, :artist, :album, :format, :date, :status, :path, :cover_url)",
+                    "VALUES (:yt_id, :title, :artist, :album, :format, "
+                    ":date, :status, :path, :cover_url)",
                     [
                         {
                             "yt_id": e["yt_id"],
@@ -290,7 +291,8 @@ class History:
             conn.close()
 
     def update_tags(self, yt_id: str, title: str, artist: str, album: str) -> bool:
-        """Atualiza metadados no SQLite e nas tags de mídia (ID3/Ogg) via Mutagen se o arquivo existir."""
+        """Atualiza metadados no SQLite e nas tags de mídia (ID3/Ogg) via
+        Mutagen se o arquivo existir."""
         record = self.get(yt_id)
         if not record:
             return False
