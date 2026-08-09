@@ -92,6 +92,8 @@ const ICONS = {
     '<svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 6 6 6-6 6"/></svg>',
   volume:
     '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path d="M16.5 8.5a4.5 4.5 0 0 1 0 7"/></svg>',
+  refresh:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11A8 8 0 1 0 18.4 15.6"/><path d="M20 5v6h-6"/></svg>',
 };
 
 // ---------------------------------------------------------------- estado
@@ -507,7 +509,11 @@ function searchViewHtml() {
         <button type="button" role="tab" data-tab="playlists" class="tab-btn" aria-selected="false">Playlists</button>
       </div>
       <div id="results" class="results" aria-live="polite">
-        <p class="empty-state">Digite algo para buscar.</p>
+        <div class="empty-state search-empty">
+          <span class="empty-glyph" aria-hidden="true">♪</span>
+          <p class="empty-title">Digite algo para buscar.</p>
+          <p class="empty-hint">Músicas, álbuns, artistas e playlists do YouTube Music — ou cole um link.</p>
+        </div>
       </div>
     </section>`;
 }
@@ -542,7 +548,13 @@ function bindSearchEvents() {
 
 function showSearchMessage(message) {
   const results = document.getElementById('results');
-  if (results) results.innerHTML = `<p class="empty-state">${escapeHtml(message)}</p>`;
+  if (results) {
+    results.innerHTML = `
+      <div class="empty-state search-empty">
+        <span class="empty-glyph" aria-hidden="true">♪</span>
+        <p class="empty-title">${escapeHtml(message)}</p>
+      </div>`;
+  }
 }
 
 // Rótulos e ordem das seções da busca (ordem fixa do stream SSE:
@@ -1402,35 +1414,37 @@ function storageSectionHtml() {
   const low = !!s.disk && free < Math.max(DISK_LOW_RATIO * total, DISK_LOW_MIN_BYTES);
   const diskPct = s.disk ? Math.min(100, (s.disk.used / Math.max(1, s.disk.total)) * 100) : 0;
   const devPct = s.deviceQuota ? Math.min(100, (s.deviceUsage / Math.max(1, s.deviceQuota)) * 100) : 0;
+  // Uso > 0 mas minúsculo (ex.: 750 KB de 10 GB) ainda ganha um pingo visível.
+  const barW = (pct) => (pct > 0 ? Math.max(1.6, pct) : 0);
   return `
     <div class="storage-card${low ? ' storage-warn' : ''}">
       ${low ? `<p class="storage-alert">⚠ Pouco espaço no servidor — ${formatBytes(free)} livres.</p>` : ''}
       <div class="storage-block">
         <div class="storage-head"><strong>Servidor</strong>
-          <button type="button" class="storage-refresh" data-action="refresh-storage" aria-label="Atualizar armazenamento">↻</button></div>
+          <button type="button" class="storage-refresh" data-action="refresh-storage" aria-label="Atualizar armazenamento" title="Atualizar">${ICONS.refresh}</button></div>
         ${
           s.disk
-            ? `<div class="storage-bar"><div class="storage-fill" style="width:${diskPct}%"></div></div>
+            ? `<div class="storage-bar"><div class="storage-fill" style="width:${barW(diskPct)}%"></div></div>
         <div class="storage-row"><span>${formatBytes(s.disk.used)} de ${formatBytes(s.disk.total)}</span><span>${formatBytes(free)} livres</span></div>`
             : ''
         }
         <div class="storage-row"><span>Biblioteca: ${formatBytes(s.librarySize)}</span>
           <span>Órfãos (.part): ${formatBytes(s.partialsSize)} (${s.partialsCount})</span></div>
         <div class="storage-actions">
-          <button type="button" class="dl-btn ghost" data-action="cleanup-partials" ${s.partialsCount ? '' : 'disabled'}>Limpar órfãos</button>
+          <button type="button" class="dl-btn ghost danger" data-action="cleanup-partials" ${s.partialsCount ? '' : 'disabled'}>Limpar órfãos</button>
         </div>
       </div>
       <div class="storage-block">
         <div class="storage-head"><strong>Dispositivo</strong></div>
         ${
           s.deviceQuota
-            ? `<div class="storage-bar"><div class="storage-fill" style="width:${devPct}%"></div></div>
+            ? `<div class="storage-bar"><div class="storage-fill" style="width:${barW(devPct)}%"></div></div>
         <div class="storage-row"><span>${formatBytes(s.deviceUsage)} de ${formatBytes(s.deviceQuota)}</span></div>`
             : ''
         }
         <div class="storage-row"><span>Cache offline: ${formatBytes(s.cacheBytes)}</span></div>
         <div class="storage-actions">
-          <button type="button" class="dl-btn ghost" data-action="clear-device-cache" ${s.cacheBytes ? '' : 'disabled'}>Limpar cache</button>
+          <button type="button" class="dl-btn ghost danger" data-action="clear-device-cache" ${s.cacheBytes ? '' : 'disabled'}>Limpar cache</button>
         </div>
       </div>
     </div>`;
@@ -1460,6 +1474,9 @@ async function resumeTasks(ids) {
 }
 
 async function cleanupPartials() {
+  if (!window.confirm('Apagar os downloads incompletos (.part) do servidor? Isso libera espaço.')) {
+    return;
+  }
   try {
     const r = await storageCleanupApi();
     const freed = Number(r.freed_bytes) || 0;
@@ -1471,6 +1488,9 @@ async function cleanupPartials() {
 }
 
 async function clearDeviceCache() {
+  if (!window.confirm('Limpar o cache de áudio offline deste dispositivo? As músicas baixadas no celular não são afetadas.')) {
+    return;
+  }
   try {
     if ('caches' in window) await caches.delete(AUDIO_CACHE_NAME);
     showToast('Cache offline limpo', 'success');
@@ -2063,8 +2083,12 @@ function renderHistory(records) {
       const status = record.status || 'pending';
       const idx = fullPlayable.indexOf(record);
       const playBtn = idx >= 0
-        ? `<button type="button" class="icon-btn history-btn history-play" data-idx="${idx}" aria-label="Tocar ${escapeHtml(record.title || '')}">▶</button>`
-        : '';
+        ? `<button type="button" class="icon-btn history-btn history-play" data-idx="${idx}" aria-label="Tocar ${escapeHtml(record.title || '')}">${ICONS.play}</button>`
+        : `<button type="button" class="icon-btn history-btn history-play is-disabled" disabled title="${
+            status === 'failed' ? 'Arquivo indisponível — o download falhou' : 'Indisponível para tocar agora'
+          }" aria-label="Tocar ${escapeHtml(record.title || '')} — ${
+            status === 'failed' ? 'arquivo indisponível no servidor' : 'ainda não está disponível para tocar'
+          }">${ICONS.play}</button>`;
       const cover = record.cover_url
         ? `<img src="${escapeHtml(record.cover_url)}" alt="" class="history-cover" />`
         : `<span class="history-cover history-cover--vinyl" aria-hidden="true">♪</span>`;
@@ -4007,7 +4031,7 @@ function libTrackRowHtml(track, index) {
         <span class="track-title">${escapeHtml(track.title)}</span>
         <span class="track-duration">${escapeHtml(track.format ? formatLabel(track.format) : '')}</span>
       </div>
-      <span class="track-dl" aria-hidden="true">▶</span>
+      <span class="track-dl" aria-hidden="true">${ICONS.play}</span>
     </li>`;
 }
 
@@ -4427,16 +4451,34 @@ function bindConnectModal() {
   const copyBtn = document.getElementById('copy-url-btn');
 
   if (btn && modal) {
-    btn.addEventListener('click', () => {
+    const openModal = () => {
       if (typeof modal.showModal === 'function') modal.showModal();
       else modal.setAttribute('open', 'true');
-    });
+      btn.setAttribute('aria-expanded', 'true');
+      btn.classList.add('is-open');
+    };
+    const closeModal = () => {
+      if (typeof modal.close === 'function') modal.close();
+      else modal.removeAttribute('open');
+      btn.setAttribute('aria-expanded', 'false');
+      btn.classList.remove('is-open');
+    };
+    btn.addEventListener('click', openModal);
+    if (typeof modal.addEventListener === 'function') {
+      // Fecha com ESC ou clique no backdrop: mantém o estado do botão sincronizado.
+      modal.addEventListener('close', closeModal);
+    }
   }
 
   if (closeBtn && modal) {
     closeBtn.addEventListener('click', () => {
       if (typeof modal.close === 'function') modal.close();
       else modal.removeAttribute('open');
+      const btn = document.getElementById('connect-btn');
+      if (btn) {
+        btn.setAttribute('aria-expanded', 'false');
+        btn.classList.remove('is-open');
+      }
     });
   }
 
